@@ -1,0 +1,228 @@
+package rest
+
+import (
+	"context"
+	"testing"
+
+	"github.com/Shasheen8/Spekto/internal/inventory"
+)
+
+func TestDetectVersionFamilies(t *testing.T) {
+	tests := []struct {
+		name    string
+		doc     string
+		version string
+		family  VersionFamily
+		level   inventory.SupportLevel
+	}{
+		{
+			name:    "swagger 2",
+			doc:     "swagger: '2.0'\ninfo:\n  title: test\n  version: 1.0.0\npaths: {}\n",
+			version: "2.0",
+			family:  VersionFamilySwagger20,
+			level:   inventory.SupportLevelFull,
+		},
+		{
+			name:    "openapi 3.1",
+			doc:     "openapi: 3.1.0\ninfo:\n  title: test\n  version: 1.0.0\npaths: {}\n",
+			version: "3.1.0",
+			family:  VersionFamilyOpenAPI31,
+			level:   inventory.SupportLevelFull,
+		},
+		{
+			name:    "openapi 3.2",
+			doc:     "openapi: 3.2.0\ninfo:\n  title: test\n  version: 1.0.0\npaths: {}\n",
+			version: "3.2.0",
+			family:  VersionFamilyOpenAPI32,
+			level:   inventory.SupportLevelFull,
+		},
+		{
+			name:    "future openapi",
+			doc:     "openapi: 3.9.0\ninfo:\n  title: test\n  version: 1.0.0\npaths: {}\n",
+			version: "3.9.0",
+			family:  VersionFamily("openapi_future"),
+			level:   inventory.SupportLevelPartial,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			version, family, level, _, err := detectVersion([]byte(tc.doc))
+			if err != nil {
+				t.Fatalf("detectVersion returned error: %v", err)
+			}
+			if version != tc.version {
+				t.Fatalf("expected version %q, got %q", tc.version, version)
+			}
+			if family != tc.family {
+				t.Fatalf("expected family %q, got %q", tc.family, family)
+			}
+			if level != tc.level {
+				t.Fatalf("expected support level %q, got %q", tc.level, level)
+			}
+		})
+	}
+}
+
+func TestParseDataExtractsRESTOperations(t *testing.T) {
+	doc := `
+openapi: 3.1.0
+info:
+  title: Spekto Test
+  version: 1.0.0
+servers:
+  - url: https://api.example.com
+paths:
+  /v1/models/{model_id}:
+    parameters:
+      - in: path
+        name: model_id
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getModel
+      tags: [models]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: expand
+          schema:
+            type: string
+            enum: [stats]
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+  /v1/models:
+    post:
+      operationId: createModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelRequest'
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    CreateModelRequest:
+      type: object
+    Model:
+      type: object
+`
+
+	parsed, err := ParseData(context.Background(), []byte(doc), "spec.yaml")
+	if err != nil {
+		t.Fatalf("ParseData returned error: %v", err)
+	}
+	if parsed.DeclaredVersion != "3.1.0" {
+		t.Fatalf("unexpected declared version: %s", parsed.DeclaredVersion)
+	}
+	if len(parsed.Operations) != 2 {
+		t.Fatalf("expected 2 operations, got %d", len(parsed.Operations))
+	}
+
+	var getOp inventory.Operation
+	var postOp inventory.Operation
+	for _, op := range parsed.Operations {
+		if op.REST == nil {
+			continue
+		}
+		switch {
+		case op.REST.Method == "GET" && op.REST.NormalizedPath == "/v1/models/{model_id}":
+			getOp = op
+		case op.REST.Method == "POST" && op.REST.NormalizedPath == "/v1/models":
+			postOp = op
+		}
+	}
+	if getOp.ID == "" {
+		t.Fatalf("expected GET operation to be present")
+	}
+	if postOp.ID == "" {
+		t.Fatalf("expected POST operation to be present")
+	}
+
+	if getOp.Protocol != inventory.ProtocolREST {
+		t.Fatalf("unexpected protocol: %s", getOp.Protocol)
+	}
+	if getOp.REST == nil {
+		t.Fatalf("expected REST details")
+	}
+	if getOp.REST.Method != "GET" {
+		t.Fatalf("unexpected method: %s", getOp.REST.Method)
+	}
+	if getOp.REST.NormalizedPath != "/v1/models/{model_id}" {
+		t.Fatalf("unexpected path: %s", getOp.REST.NormalizedPath)
+	}
+	if len(getOp.REST.PathParams) != 1 {
+		t.Fatalf("expected one path param, got %d", len(getOp.REST.PathParams))
+	}
+	if getOp.AuthHints.RequiresAuth != inventory.AuthRequirementYes {
+		t.Fatalf("expected auth required, got %s", getOp.AuthHints.RequiresAuth)
+	}
+	if len(getOp.Targets) != 1 || getOp.Targets[0] != "https://api.example.com" {
+		t.Fatalf("unexpected targets: %#v", getOp.Targets)
+	}
+
+	if postOp.REST == nil || postOp.REST.RequestBody == nil {
+		t.Fatalf("expected request body metadata on POST operation")
+	}
+	if postOp.SchemaRefs.Request != "#/components/schemas/CreateModelRequest" {
+		t.Fatalf("unexpected request schema ref: %s", postOp.SchemaRefs.Request)
+	}
+	if postOp.SchemaRefs.Responses["201"] != "#/components/schemas/Model" {
+		t.Fatalf("unexpected response schema ref: %s", postOp.SchemaRefs.Responses["201"])
+	}
+}
+
+func TestParseSwaggerTwoConvertsToOperations(t *testing.T) {
+	doc := `
+swagger: "2.0"
+info:
+  title: Spekto Swagger Test
+  version: 1.0.0
+host: api.example.com
+basePath: /api
+schemes:
+  - https
+paths:
+  /v1/health:
+    get:
+      responses:
+        200:
+          description: ok
+`
+
+	parsed, err := ParseData(context.Background(), []byte(doc), "swagger.yaml")
+	if err != nil {
+		t.Fatalf("ParseData returned error: %v", err)
+	}
+	if parsed.DeclaredVersion != "2.0" {
+		t.Fatalf("unexpected version: %s", parsed.DeclaredVersion)
+	}
+	if len(parsed.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(parsed.Operations))
+	}
+	op := parsed.Operations[0]
+	if len(op.Targets) != 1 || op.Targets[0] != "https://api.example.com/api" {
+		t.Fatalf("unexpected server candidates: %#v", op.Targets)
+	}
+	if op.REST == nil || op.REST.NormalizedPath != "/v1/health" {
+		t.Fatalf("unexpected normalized path")
+	}
+}
