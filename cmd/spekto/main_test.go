@@ -74,3 +74,59 @@ type Model {
 		t.Fatalf("expected one graphql operation, got %d", payload.Summary.ByProtocol["graphql"])
 	}
 }
+
+func TestRunDiscoverSpecAcceptsHARInput(t *testing.T) {
+	dir := t.TempDir()
+
+	harPath := filepath.Join(dir, "traffic.har")
+	harDoc := `{
+	  "log": {
+	    "entries": [
+	      {
+	        "request": {
+	          "method": "GET",
+	          "url": "https://api.example.com/v1/models?id=model_1",
+	          "headers": [],
+	          "queryString": [{"name":"id","value":"model_1"}]
+	        },
+	        "response": {
+	          "status": 200,
+	          "content": {"mimeType":"application/json"}
+	        }
+	      }
+	    ]
+	  }
+	}`
+	if err := os.WriteFile(harPath, []byte(harDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(har) returned error: %v", err)
+	}
+
+	outPath := filepath.Join(dir, "inventory.json")
+	if err := run([]string{
+		"discover", "spec",
+		"--har", harPath,
+		"--out", outPath,
+	}); err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile returned error: %v", err)
+	}
+	var payload struct {
+		Summary struct {
+			Total      int            `json:"total"`
+			ByProtocol map[string]int `json:"by_protocol"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if payload.Summary.Total != 1 {
+		t.Fatalf("expected total 1, got %d", payload.Summary.Total)
+	}
+	if payload.Summary.ByProtocol["rest"] != 1 {
+		t.Fatalf("expected one rest operation from HAR, got %d", payload.Summary.ByProtocol["rest"])
+	}
+}

@@ -43,6 +43,7 @@ func runDiscoverSpec(args []string) error {
 	var protoFiles multiValue
 	var protoImportPaths multiValue
 	var descriptorSets multiValue
+	var harPaths multiValue
 	var outPath string
 
 	fs.Var(&openapiPaths, "openapi", "OpenAPI or Swagger file path")
@@ -50,13 +51,14 @@ func runDiscoverSpec(args []string) error {
 	fs.Var(&protoFiles, "proto", "Proto file path")
 	fs.Var(&protoImportPaths, "proto-import-path", "Proto import path")
 	fs.Var(&descriptorSets, "descriptor-set", "Protobuf descriptor set file path")
+	fs.Var(&harPaths, "har", "HAR file path")
 	fs.StringVar(&outPath, "out", "", "Output path for canonical inventory JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	if len(openapiPaths) == 0 && len(graphqlPaths) == 0 && len(protoFiles) == 0 && len(descriptorSets) == 0 {
+	if len(openapiPaths) == 0 && len(graphqlPaths) == 0 && len(protoFiles) == 0 && len(descriptorSets) == 0 && len(harPaths) == 0 {
 		return fmt.Errorf("discover spec requires at least one input source")
 	}
 
@@ -98,6 +100,18 @@ func runDiscoverSpec(args []string) error {
 		doc, err := grpcdiscovery.ParseProtoFiles(protoImportPaths, normalizedFiles)
 		if err != nil {
 			return fmt.Errorf("proto files: %w", err)
+		}
+		operationSets = append(operationSets, doc.Operations)
+	}
+
+	for _, path := range harPaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("har %s: %w", path, err)
+		}
+		doc, err := inventory.ParseHAR(data, path)
+		if err != nil {
+			return fmt.Errorf("har %s: %w", path, err)
 		}
 		operationSets = append(operationSets, doc.Operations)
 	}

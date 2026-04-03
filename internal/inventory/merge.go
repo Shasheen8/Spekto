@@ -69,15 +69,9 @@ func mergeOperation(a, b Operation) Operation {
 	out.Examples = mergeExamples(out.Examples, b.Examples)
 	out.Tags = uniqueStrings(append(out.Tags, b.Tags...))
 	out.Status = mergeStatus(out.Status, b.Status)
-	if out.REST == nil {
-		out.REST = b.REST
-	}
-	if out.GraphQL == nil {
-		out.GraphQL = b.GraphQL
-	}
-	if out.GRPC == nil {
-		out.GRPC = b.GRPC
-	}
+	out.REST = mergeRESTDetails(out.REST, b.REST)
+	out.GraphQL = mergeGraphQLDetails(out.GraphQL, b.GraphQL)
+	out.GRPC = mergeGRPCDetails(out.GRPC, b.GRPC)
 	return out
 }
 
@@ -178,6 +172,186 @@ func mergeStatus(a, b InventoryStatus) InventoryStatus {
 		return b
 	}
 	return a
+}
+
+func mergeRESTDetails(a, b *RESTDetails) *RESTDetails {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	out := *a
+	out.PathParams = mergeParameterMeta(out.PathParams, b.PathParams)
+	out.QueryParams = mergeParameterMeta(out.QueryParams, b.QueryParams)
+	out.HeaderParams = mergeParameterMeta(out.HeaderParams, b.HeaderParams)
+	out.CookieParams = mergeParameterMeta(out.CookieParams, b.CookieParams)
+	out.ServerCandidates = uniqueStrings(append(out.ServerCandidates, b.ServerCandidates...))
+	out.ResponseMap = mergeResponseMeta(out.ResponseMap, b.ResponseMap)
+	if out.RequestBody == nil {
+		out.RequestBody = b.RequestBody
+	} else if b.RequestBody != nil {
+		out.RequestBody.Content = mergeMediaTypes(out.RequestBody.Content, b.RequestBody.Content)
+		if out.RequestBody.SchemaRefs == nil {
+			out.RequestBody.SchemaRefs = map[string]string{}
+		}
+		for k, v := range b.RequestBody.SchemaRefs {
+			if out.RequestBody.SchemaRefs[k] == "" {
+				out.RequestBody.SchemaRefs[k] = v
+			}
+		}
+		out.RequestBody.Required = out.RequestBody.Required || b.RequestBody.Required
+	}
+	if out.OperationID == "" {
+		out.OperationID = b.OperationID
+	}
+	out.Deprecated = out.Deprecated || b.Deprecated
+	return &out
+}
+
+func mergeGraphQLDetails(a, b *GraphQLDetails) *GraphQLDetails {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	out := *a
+	if out.OperationName == "" {
+		out.OperationName = b.OperationName
+	}
+	if out.RootKind == "" {
+		out.RootKind = b.RootKind
+	}
+	out.ArgumentMap = uniqueStrings(append(out.ArgumentMap, b.ArgumentMap...))
+	out.SelectionHints = uniqueStrings(append(out.SelectionHints, b.SelectionHints...))
+	out.TypeDeps = uniqueStrings(append(out.TypeDeps, b.TypeDeps...))
+	return &out
+}
+
+func mergeGRPCDetails(a, b *GRPCDetails) *GRPCDetails {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	out := *a
+	if out.Package == "" {
+		out.Package = b.Package
+	}
+	if out.Service == "" {
+		out.Service = b.Service
+	}
+	if out.RPC == "" {
+		out.RPC = b.RPC
+	}
+	if out.StreamingMode == "" {
+		out.StreamingMode = b.StreamingMode
+	}
+	if out.RequestMsg == "" {
+		out.RequestMsg = b.RequestMsg
+	}
+	if out.ResponseMsg == "" {
+		out.ResponseMsg = b.ResponseMsg
+	}
+	return &out
+}
+
+func mergeParameterMeta(a, b []ParameterMeta) []ParameterMeta {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := map[string]ParameterMeta{}
+	for _, value := range append(append([]ParameterMeta{}, a...), b...) {
+		key := value.In + "|" + value.Name
+		existing, ok := seen[key]
+		if !ok {
+			seen[key] = value
+			continue
+		}
+		if existing.Type == "" {
+			existing.Type = value.Type
+		}
+		if existing.Format == "" {
+			existing.Format = value.Format
+		}
+		if existing.Default == "" {
+			existing.Default = value.Default
+		}
+		if existing.SchemaRef == "" {
+			existing.SchemaRef = value.SchemaRef
+		}
+		existing.Required = existing.Required || value.Required
+		existing.Enum = uniqueStrings(append(existing.Enum, value.Enum...))
+		seen[key] = existing
+	}
+	out := make([]ParameterMeta, 0, len(seen))
+	for _, value := range seen {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].In == out[j].In {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].In < out[j].In
+	})
+	return out
+}
+
+func mergeResponseMeta(a, b []ResponseMeta) []ResponseMeta {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := map[string]ResponseMeta{}
+	for _, value := range append(append([]ResponseMeta{}, a...), b...) {
+		existing, ok := seen[value.StatusCode]
+		if !ok {
+			seen[value.StatusCode] = value
+			continue
+		}
+		existing.Content = mergeMediaTypes(existing.Content, value.Content)
+		if existing.SchemaRefs == nil {
+			existing.SchemaRefs = map[string]string{}
+		}
+		for k, v := range value.SchemaRefs {
+			if existing.SchemaRefs[k] == "" {
+				existing.SchemaRefs[k] = v
+			}
+		}
+		seen[value.StatusCode] = existing
+	}
+	out := make([]ResponseMeta, 0, len(seen))
+	for _, value := range seen {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StatusCode < out[j].StatusCode })
+	return out
+}
+
+func mergeMediaTypes(a, b []MediaTypeMeta) []MediaTypeMeta {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := map[string]MediaTypeMeta{}
+	for _, value := range append(append([]MediaTypeMeta{}, a...), b...) {
+		key := value.MediaType
+		existing, ok := seen[key]
+		if !ok {
+			seen[key] = value
+			continue
+		}
+		if existing.SchemaRef == "" {
+			existing.SchemaRef = value.SchemaRef
+		}
+		seen[key] = existing
+	}
+	out := make([]MediaTypeMeta, 0, len(seen))
+	for _, value := range seen {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].MediaType < out[j].MediaType })
+	return out
 }
 
 func summarize(ops []Operation) Summary {
