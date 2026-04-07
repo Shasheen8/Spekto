@@ -49,10 +49,14 @@ func TestApplyEnvOverridesScanAndOutput(t *testing.T) {
 
 	err := cfg.ApplyEnv(func(key string) string {
 		values := map[string]string{
-			"SPEKTO_SCAN_CONCURRENCY":    "8",
-			"SPEKTO_SCAN_REQUEST_BUDGET": "900",
-			"SPEKTO_SCAN_TIMEOUT":        "12s",
-			"SPEKTO_OUTPUT_JSON":         "tmp/out.json",
+			"SPEKTO_SCAN_CONCURRENCY":        "8",
+			"SPEKTO_SCAN_REQUEST_BUDGET":     "900",
+			"SPEKTO_SCAN_TIMEOUT":            "12s",
+			"SPEKTO_SCAN_RETRIES":            "2",
+			"SPEKTO_SCAN_RATE_LIMIT":         "4.5",
+			"SPEKTO_SCAN_MAX_RESPONSE_BYTES": "4096",
+			"SPEKTO_SCAN_FOLLOW_REDIRECTS":   "true",
+			"SPEKTO_OUTPUT_JSON":             "tmp/out.json",
 		}
 		return values[key]
 	})
@@ -67,6 +71,18 @@ func TestApplyEnvOverridesScanAndOutput(t *testing.T) {
 	}
 	if cfg.Scan.Timeout != 12*time.Second {
 		t.Fatalf("unexpected timeout: %s", cfg.Scan.Timeout)
+	}
+	if cfg.Scan.Retries != 2 {
+		t.Fatalf("unexpected retries: %d", cfg.Scan.Retries)
+	}
+	if cfg.Scan.RateLimit != 4.5 {
+		t.Fatalf("unexpected rate limit: %v", cfg.Scan.RateLimit)
+	}
+	if cfg.Scan.MaxResponseBytes != 4096 {
+		t.Fatalf("unexpected max response bytes: %d", cfg.Scan.MaxResponseBytes)
+	}
+	if !cfg.Scan.FollowRedirects {
+		t.Fatalf("expected follow redirects to be true")
 	}
 	if cfg.Output.JSONPath != "tmp/out.json" {
 		t.Fatalf("unexpected output path: %s", cfg.Output.JSONPath)
@@ -107,10 +123,45 @@ func TestSelectTargetsReturnsNamedTargets(t *testing.T) {
 	}
 }
 
+func TestSelectTargetsFilteredExcludesNamedTarget(t *testing.T) {
+	cfg := Config{
+		Targets: []Target{
+			{Name: "rest-a", Protocol: "rest", BaseURL: "https://a.example.com"},
+			{Name: "rest-b", Protocol: "rest", BaseURL: "https://b.example.com"},
+		},
+	}
+
+	selected, err := cfg.SelectTargetsFiltered([]string{"rest-a", "rest-b"}, []string{"rest-b"})
+	if err != nil {
+		t.Fatalf("SelectTargetsFiltered returned error: %v", err)
+	}
+	if len(selected) != 1 || selected[0].Name != "rest-a" {
+		t.Fatalf("unexpected selected targets: %#v", selected)
+	}
+}
+
 func TestValidateRejectsUnsupportedProtocol(t *testing.T) {
 	cfg := Config{
 		Targets: []Target{
 			{Name: "bad", Protocol: "soap", BaseURL: "https://api.example.com"},
+		},
+	}
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected validation error")
+	}
+}
+
+func TestValidateRejectsInvalidAuthConfiguration(t *testing.T) {
+	cfg := Config{
+		Targets: []Target{
+			{Name: "grpc-a", Protocol: "grpc", Endpoint: "grpc.example.com:443"},
+		},
+		AuthContexts: []AuthContext{
+			{
+				Name:             "api",
+				APIKeyHeaderName: "X-API-Key",
+			},
 		},
 	}
 	cfg.applyDefaults()

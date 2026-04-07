@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Shasheen8/Spekto/internal/config"
 	activediscovery "github.com/Shasheen8/Spekto/internal/discovery/active"
+	"github.com/Shasheen8/Spekto/internal/executor"
 	"github.com/Shasheen8/Spekto/internal/inventory"
 	graphqldiscovery "github.com/Shasheen8/Spekto/internal/protocol/graphql"
 	grpcdiscovery "github.com/Shasheen8/Spekto/internal/protocol/grpc"
@@ -28,25 +30,29 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return usageError()
 	}
-	if args[0] != "discover" {
-		return fmt.Errorf("unsupported command %q", args[0])
-	}
-	if len(args) < 2 {
-		return fmt.Errorf("unsupported discover subcommand")
-	}
-	switch args[1] {
-	case "spec":
-		return runDiscoverSpec(args[2:])
-	case "traffic":
-		return runDiscoverTraffic(args[2:])
-	case "manual":
-		return runDiscoverManual(args[2:])
-	case "active":
-		return runDiscoverActive(args[2:])
-	case "merge":
-		return runDiscoverMerge(args[2:])
+	switch args[0] {
+	case "discover":
+		if len(args) < 2 {
+			return fmt.Errorf("unsupported discover subcommand")
+		}
+		switch args[1] {
+		case "spec":
+			return runDiscoverSpec(args[2:])
+		case "traffic":
+			return runDiscoverTraffic(args[2:])
+		case "manual":
+			return runDiscoverManual(args[2:])
+		case "active":
+			return runDiscoverActive(args[2:])
+		case "merge":
+			return runDiscoverMerge(args[2:])
+		default:
+			return fmt.Errorf("unsupported discover subcommand")
+		}
+	case "scan":
+		return runScan(args[1:])
 	default:
-		return fmt.Errorf("unsupported discover subcommand")
+		return fmt.Errorf("unsupported command %q", args[0])
 	}
 }
 
@@ -307,7 +313,7 @@ func writeMergedInventory(outPath string, operationSets ...[]inventory.Operation
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: spekto discover spec [...] | spekto discover traffic [--har path] [--postman path] [--access-log path] [--out file] | spekto discover manual [--seed file] [--out file] | spekto discover active [--base-url url] [--grpc-reflection host:port] [--out file] | spekto discover merge [--inventory file] [--out file]")
+	return fmt.Errorf("usage: spekto discover spec [...] | spekto discover traffic [--har path] [--postman path] [--access-log path] [--out file] | spekto discover manual [--seed file] [--out file] | spekto discover active [--base-url url] [--grpc-reflection host:port] [--out file] | spekto discover merge [--inventory file] [--out file] | spekto scan --config file --inventory file [--target name] [--exclude-target name] [--auth-context name] [--out file]")
 }
 
 type multiValue []string
@@ -340,4 +346,133 @@ func markGRPCReflectionActive(ops []inventory.Operation, target string) []invent
 		out = append(out, op)
 	}
 	return out
+}
+
+func runScan(args []string) error {
+	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var configPath string
+	var inventoryPath string
+	var outPath string
+	var includeTargets multiValue
+	var excludeTargets multiValue
+	var authContexts multiValue
+	var concurrency int
+	var requestBudget int
+	var timeout time.Duration
+	var followRedirects triStateBool
+
+	fs.StringVar(&configPath, "config", "", "Config file path")
+	fs.StringVar(&inventoryPath, "inventory", "", "Canonical inventory JSON file path")
+	fs.StringVar(&outPath, "out", "", "Output path for evidence bundle JSON")
+	fs.Var(&includeTargets, "target", "Target name to include")
+	fs.Var(&excludeTargets, "exclude-target", "Target name to exclude")
+	fs.Var(&authContexts, "auth-context", "Auth context name to include")
+	fs.IntVar(&concurrency, "concurrency", 0, "Override scan concurrency")
+	fs.IntVar(&requestBudget, "request-budget", 0, "Override scan request budget")
+	fs.DurationVar(&timeout, "timeout", 0, "Override scan timeout")
+	fs.Var(&followRedirects, "follow-redirects", "Follow HTTP redirects during scan execution")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(configPath) == "" {
+		return fmt.Errorf("scan requires --config")
+	}
+	if strings.TrimSpace(inventoryPath) == "" {
+		return fmt.Errorf("scan requires --inventory")
+	}
+
+	cfg, err := config.LoadFile(configPath)
+	if err != nil {
+		return err
+	}
+	applyScanOverrides(&cfg, concurrency, requestBudget, timeout, followRedirects)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	inv, err := inventory.LoadInventoryFile(inventoryPath)
+	if err != nil {
+		return err
+	}
+
+	bundle, err := executor.Scan(context.Background(), cfg, inv, executor.ScanOptions{
+		IncludeTargets: includeTargets,
+		ExcludeTargets: excludeTargets,
+		AuthContexts:   authContexts,
+	})
+	if err != nil {
+		return err
+	}
+
+	data, err := bundle.JSON()
+	if err != nil {
+		return err
+	}
+
+	outputPath := strings.TrimSpace(outPath)
+	if outputPath == "" {
+		switch {
+		case strings.TrimSpace(cfg.Output.EvidencePath) != "":
+			outputPath = cfg.Output.EvidencePath
+		case strings.TrimSpace(cfg.Output.JSONPath) != "":
+			outputPath = cfg.Output.JSONPath
+		}
+	}
+	if outputPath == "" {
+		_, err = os.Stdout.Write(append(data, '\n'))
+		return err
+	}
+	return os.WriteFile(outputPath, append(data, '\n'), 0o600)
+}
+
+func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, timeout time.Duration, followRedirects triStateBool) {
+	if cfg == nil {
+		return
+	}
+	if concurrency > 0 {
+		cfg.Scan.Concurrency = concurrency
+	}
+	if requestBudget > 0 {
+		cfg.Scan.RequestBudget = requestBudget
+	}
+	if timeout > 0 {
+		cfg.Scan.Timeout = timeout
+	}
+	if followRedirects.set {
+		cfg.Scan.FollowRedirects = followRedirects.value
+	}
+}
+
+type triStateBool struct {
+	set   bool
+	value bool
+}
+
+func (b *triStateBool) String() string {
+	if b == nil || !b.set {
+		return ""
+	}
+	if b.value {
+		return "true"
+	}
+	return "false"
+}
+
+func (b *triStateBool) Set(value string) error {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "true", "1", "yes":
+		b.set = true
+		b.value = true
+		return nil
+	case "false", "0", "no":
+		b.set = true
+		b.value = false
+		return nil
+	default:
+		return fmt.Errorf("invalid boolean value %q", value)
+	}
 }

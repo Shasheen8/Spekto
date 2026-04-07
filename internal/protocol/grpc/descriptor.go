@@ -1,7 +1,6 @@
 package grpc
 
 import (
-	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -206,11 +205,4 @@ func streamingMode(method protoreflect.MethodDescriptor) string {
 	default:
 		return "unary"
 	}
-}
-
-func DebugString(op inventory.Operation) string {
-	if op.GRPC == nil {
-		return op.Locator
-	}
-	return fmt.Sprintf("%s (%s)", op.Locator, op.GRPC.StreamingMode)
 }

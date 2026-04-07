@@ -18,6 +18,8 @@ Spekto is built around one inventory model that can:
 - run bounded active discovery for common spec and GraphQL entrypoints plus explicit gRPC reflection targets
 - merge overlapping sources into one canonical inventory
 - preserve provenance and confidence for each discovered operation
+- execute inventory-backed requests across `REST`, `GraphQL`, and unary `gRPC`
+- emit one evidence bundle format for CLI and CI runs
 
 ## Build
 
@@ -38,6 +40,7 @@ go run ./cmd/spekto discover spec --openapi openapi.yaml
 - `spekto discover manual`
 - `spekto discover active`
 - `spekto discover merge`
+- `spekto scan`
 
 ### `discover spec`
 
@@ -168,7 +171,10 @@ Example:
 
 ## Output
 
-Spekto currently emits canonical inventory JSON.
+Spekto emits:
+
+- canonical inventory JSON for discovery workflows
+- evidence bundle JSON for scan workflows
 
 Each operation includes:
 
@@ -186,15 +192,83 @@ Current derived signals include:
 - `specified_but_unseen`
 - `observed_but_undocumented`
 
+Scan results include:
+
+- target and protocol
+- operation ID and locator
+- selected auth context
+- request evidence with redacted headers
+- response evidence with truncation flags
+- bundle summary by target and protocol
+
+## `scan`
+
+Execute scoped requests from a canonical inventory using a config file.
+
+Supported flags:
+
+- `--config`
+- `--inventory`
+- `--target`
+- `--exclude-target`
+- `--auth-context`
+- `--concurrency`
+- `--request-budget`
+- `--timeout`
+- `--follow-redirects`
+- `--out`
+
+Example:
+
+```bash
+./spekto scan \
+  --config spekto.yaml \
+  --inventory inventory.json \
+  --target rest-prod \
+  --auth-context prod-bearer \
+  --out evidence.json
+```
+
+Minimal config:
+
+```yaml
+targets:
+  - name: rest-prod
+    protocol: rest
+    base_url: https://api.example.com
+  - name: graphql-prod
+    protocol: graphql
+    endpoint: https://api.example.com/graphql
+  - name: grpc-prod
+    protocol: grpc
+    endpoint: grpc.example.com:443
+
+auth_contexts:
+  - name: prod-bearer
+    bearer_token_env: TOGETHER_TOKEN
+
+scan:
+  concurrency: 4
+  request_budget: 200
+  timeout: 5s
+  retries: 1
+  rate_limit: 5
+  max_response_bytes: 65536
+```
+
 ## Safety Model
 
-Spekto keeps discovery bounded by default:
+Spekto keeps discovery and execution bounded by default:
 
 - no broad brute-force path spraying
 - active HTTP probing only checks common spec and GraphQL entrypoints
 - gRPC active discovery only uses reflection targets you pass explicitly
 - inventory generation is read-only
-- request paths use timeouts and bounded response reads
+- request execution uses timeouts, bounded response reads, and worker limits
+- HTTP redirects are disabled by default
+- HTTP retries are limited to safe methods
+- scan output redacts credentials from headers, cookies, and API-key query params
+- gRPC execution is limited to unary methods in the current runtime
 
 ## Why Spekto
 

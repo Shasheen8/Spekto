@@ -29,7 +29,9 @@ type Target struct {
 	BaseURL        string   `yaml:"base_url,omitempty"`
 	Endpoint       string   `yaml:"endpoint,omitempty"`
 	DiscoveryModes []string `yaml:"discovery_modes,omitempty"`
+	AuthContexts   []string `yaml:"auth_contexts,omitempty"`
 	Enabled        bool     `yaml:"enabled,omitempty"`
+	AllowPlaintext bool     `yaml:"allow_plaintext,omitempty"`
 }
 
 type InventorySources struct {
@@ -47,6 +49,7 @@ type InventorySources struct {
 
 type AuthContext struct {
 	Name             string            `yaml:"name"`
+	Roles            []string          `yaml:"roles,omitempty"`
 	Headers          map[string]string `yaml:"headers,omitempty"`
 	BearerToken      string            `yaml:"bearer_token,omitempty"`
 	BearerTokenEnv   string            `yaml:"bearer_token_env,omitempty"`
@@ -54,16 +57,26 @@ type AuthContext struct {
 	BasicUsernameEnv string            `yaml:"basic_username_env,omitempty"`
 	BasicPassword    string            `yaml:"basic_password,omitempty"`
 	BasicPasswordEnv string            `yaml:"basic_password_env,omitempty"`
+	APIKeyHeaderName string            `yaml:"api_key_header_name,omitempty"`
+	APIKeyQueryName  string            `yaml:"api_key_query_name,omitempty"`
+	APIKeyValue      string            `yaml:"api_key_value,omitempty"`
+	APIKeyValueEnv   string            `yaml:"api_key_value_env,omitempty"`
 	Cookies          map[string]string `yaml:"cookies,omitempty"`
+	MTLS             *MTLSConfig       `yaml:"mtls,omitempty"`
+	Login            *LoginFlow        `yaml:"login,omitempty"`
 }
 
 type ScanPolicy struct {
-	EnabledRules  []string      `yaml:"enabled_rules,omitempty"`
-	DisabledRules []string      `yaml:"disabled_rules,omitempty"`
-	SafetyLevel   string        `yaml:"safety_level,omitempty"`
-	RequestBudget int           `yaml:"request_budget,omitempty"`
-	Concurrency   int           `yaml:"concurrency,omitempty"`
-	Timeout       time.Duration `yaml:"timeout,omitempty"`
+	EnabledRules     []string      `yaml:"enabled_rules,omitempty"`
+	DisabledRules    []string      `yaml:"disabled_rules,omitempty"`
+	SafetyLevel      string        `yaml:"safety_level,omitempty"`
+	RequestBudget    int           `yaml:"request_budget,omitempty"`
+	Concurrency      int           `yaml:"concurrency,omitempty"`
+	Timeout          time.Duration `yaml:"timeout,omitempty"`
+	Retries          int           `yaml:"retries,omitempty"`
+	RateLimit        float64       `yaml:"rate_limit,omitempty"`
+	MaxResponseBytes int64         `yaml:"max_response_bytes,omitempty"`
+	FollowRedirects  bool          `yaml:"follow_redirects,omitempty"`
 }
 
 type OutputConfig struct {
@@ -71,6 +84,28 @@ type OutputConfig struct {
 	SARIFPath    string `yaml:"sarif_path,omitempty"`
 	EvidencePath string `yaml:"evidence_path,omitempty"`
 	CoveragePath string `yaml:"coverage_path,omitempty"`
+}
+
+type MTLSConfig struct {
+	CertFile           string `yaml:"cert_file,omitempty"`
+	KeyFile            string `yaml:"key_file,omitempty"`
+	CAFile             string `yaml:"ca_file,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+}
+
+type LoginFlow struct {
+	Method      string            `yaml:"method,omitempty"`
+	URL         string            `yaml:"url,omitempty"`
+	Headers     map[string]string `yaml:"headers,omitempty"`
+	Body        string            `yaml:"body,omitempty"`
+	ContentType string            `yaml:"content_type,omitempty"`
+	Capture     LoginCapture      `yaml:"capture,omitempty"`
+}
+
+type LoginCapture struct {
+	BearerJSONPointer string `yaml:"bearer_json_pointer,omitempty"`
+	Header            string `yaml:"header,omitempty"`
+	Cookie            string `yaml:"cookie,omitempty"`
 }
 
 func LoadFile(path string) (Config, error) {
@@ -122,6 +157,34 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 		}
 		c.Scan.Timeout = value
 	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_RETRIES")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_SCAN_RETRIES: %w", err)
+		}
+		c.Scan.Retries = value
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_RATE_LIMIT")); raw != "" {
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_SCAN_RATE_LIMIT: %w", err)
+		}
+		c.Scan.RateLimit = value
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_MAX_RESPONSE_BYTES")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_SCAN_MAX_RESPONSE_BYTES: %w", err)
+		}
+		c.Scan.MaxResponseBytes = value
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_FOLLOW_REDIRECTS")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_SCAN_FOLLOW_REDIRECTS: %w", err)
+		}
+		c.Scan.FollowRedirects = value
+	}
 	if raw := strings.TrimSpace(getenv("SPEKTO_OUTPUT_JSON")); raw != "" {
 		c.Output.JSONPath = raw
 	}
@@ -140,6 +203,10 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 }
 
 func (c Config) SelectTargets(names []string) ([]Target, error) {
+	return c.SelectTargetsFiltered(names, nil)
+}
+
+func (c Config) SelectTargetsFiltered(include []string, exclude []string) ([]Target, error) {
 	if len(c.Targets) == 0 {
 		return nil, nil
 	}
@@ -149,16 +216,16 @@ func (c Config) SelectTargets(names []string) ([]Target, error) {
 		index[target.Name] = target
 	}
 
-	if len(names) > 0 {
-		selected := make([]Target, 0, len(names))
-		for _, name := range names {
+	if len(include) > 0 {
+		selected := make([]Target, 0, len(include))
+		for _, name := range include {
 			target, ok := index[name]
 			if !ok {
 				return nil, fmt.Errorf("unknown target %q", name)
 			}
 			selected = append(selected, target)
 		}
-		return selected, nil
+		return excludeTargets(selected, exclude), nil
 	}
 
 	selected := make([]Target, 0, len(c.Targets))
@@ -173,7 +240,7 @@ func (c Config) SelectTargets(names []string) ([]Target, error) {
 			selected = append(selected, target)
 		}
 	}
-	return selected, nil
+	return excludeTargets(selected, exclude), nil
 }
 
 func (c Config) Validate() error {
@@ -192,6 +259,9 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(target.BaseURL) == "" && strings.TrimSpace(target.Endpoint) == "" {
 			return fmt.Errorf("target %q must include base_url or endpoint", target.Name)
 		}
+		if target.Protocol == "grpc" && strings.TrimSpace(target.Endpoint) == "" {
+			return fmt.Errorf("grpc target %q must include endpoint", target.Name)
+		}
 		for _, mode := range target.DiscoveryModes {
 			if !slices.Contains(supportedDiscoveryModes, mode) {
 				return fmt.Errorf("target %q has unsupported discovery mode %q", target.Name, mode)
@@ -208,6 +278,25 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate auth context %q", auth.Name)
 		}
 		authNames[auth.Name] = struct{}{}
+		if auth.APIKeyHeaderName != "" && strings.TrimSpace(auth.APIKeyValue) == "" && strings.TrimSpace(auth.APIKeyValueEnv) == "" {
+			return fmt.Errorf("auth context %q api key header requires a value", auth.Name)
+		}
+		if auth.APIKeyQueryName != "" && strings.TrimSpace(auth.APIKeyValue) == "" && strings.TrimSpace(auth.APIKeyValueEnv) == "" {
+			return fmt.Errorf("auth context %q api key query requires a value", auth.Name)
+		}
+		if auth.MTLS != nil {
+			if strings.TrimSpace(auth.MTLS.CertFile) == "" || strings.TrimSpace(auth.MTLS.KeyFile) == "" {
+				return fmt.Errorf("auth context %q mtls requires cert_file and key_file", auth.Name)
+			}
+		}
+		if auth.Login != nil {
+			if strings.TrimSpace(auth.Login.URL) == "" {
+				return fmt.Errorf("auth context %q login requires url", auth.Name)
+			}
+			if auth.Login.Capture.BearerJSONPointer == "" && auth.Login.Capture.Header == "" && auth.Login.Capture.Cookie == "" {
+				return fmt.Errorf("auth context %q login requires a capture target", auth.Name)
+			}
+		}
 	}
 
 	if c.Scan.Concurrency <= 0 {
@@ -218,6 +307,15 @@ func (c Config) Validate() error {
 	}
 	if c.Scan.Timeout <= 0 {
 		return errors.New("scan timeout must be greater than zero")
+	}
+	if c.Scan.Retries < 0 {
+		return errors.New("scan retries must not be negative")
+	}
+	if c.Scan.RateLimit < 0 {
+		return errors.New("scan rate_limit must not be negative")
+	}
+	if c.Scan.MaxResponseBytes < 0 {
+		return errors.New("scan max_response_bytes must not be negative")
 	}
 
 	return nil
@@ -233,9 +331,22 @@ func (c *Config) applyDefaults() {
 	if c.Scan.Timeout == 0 {
 		c.Scan.Timeout = 5 * time.Second
 	}
+	if c.Scan.MaxResponseBytes == 0 {
+		c.Scan.MaxResponseBytes = 64 * 1024
+	}
 	for i := range c.Targets {
 		c.Targets[i].Protocol = strings.ToLower(strings.TrimSpace(c.Targets[i].Protocol))
 		c.Targets[i].DiscoveryModes = normalizeStrings(c.Targets[i].DiscoveryModes)
+		c.Targets[i].AuthContexts = normalizeNames(c.Targets[i].AuthContexts)
+	}
+	for i := range c.AuthContexts {
+		c.AuthContexts[i].Roles = normalizeNames(c.AuthContexts[i].Roles)
+		if c.AuthContexts[i].Login != nil {
+			c.AuthContexts[i].Login.Method = strings.ToUpper(strings.TrimSpace(c.AuthContexts[i].Login.Method))
+			if c.AuthContexts[i].Login.Method == "" {
+				c.AuthContexts[i].Login.Method = httpMethodPost
+			}
+		}
 	}
 }
 
@@ -249,6 +360,9 @@ func (c *Config) resolveAuthContextEnv(getenv func(string) string) {
 		}
 		if env := strings.TrimSpace(c.AuthContexts[i].BasicPasswordEnv); env != "" {
 			c.AuthContexts[i].BasicPassword = getenv(env)
+		}
+		if env := strings.TrimSpace(c.AuthContexts[i].APIKeyValueEnv); env != "" {
+			c.AuthContexts[i].APIKeyValue = getenv(env)
 		}
 	}
 }
@@ -266,3 +380,40 @@ func normalizeStrings(values []string) []string {
 	}
 	return out
 }
+
+func normalizeNames(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func excludeTargets(targets []Target, exclude []string) []Target {
+	if len(exclude) == 0 {
+		return targets
+	}
+	ignored := map[string]struct{}{}
+	for _, name := range exclude {
+		trimmed := strings.TrimSpace(name)
+		if trimmed != "" {
+			ignored[trimmed] = struct{}{}
+		}
+	}
+	selected := make([]Target, 0, len(targets))
+	for _, target := range targets {
+		if _, skip := ignored[target.Name]; skip {
+			continue
+		}
+		selected = append(selected, target)
+	}
+	return selected
+}
+
+const httpMethodPost = "POST"

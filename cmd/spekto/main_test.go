@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/Shasheen8/Spekto/internal/inventory"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 	grpc_testing "google.golang.org/grpc/reflection/grpc_testing"
@@ -408,4 +411,74 @@ func TestRunDiscoverActiveAcceptsGRPCReflection(t *testing.T) {
 
 type cliSearchServiceServer struct {
 	grpc_testing.UnimplementedSearchServiceServer
+}
+
+func TestRunScanWritesBundle(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfgPath := filepath.Join(t.TempDir(), "spekto.yaml")
+	configDoc := "targets:\n  - name: rest\n    protocol: rest\n    base_url: " + server.URL + "\nscan:\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	operation := inventory.NewRESTOperation(http.MethodGet, "/")
+	operation.DisplayName = "root"
+	operation.Confidence = 0.9
+	operation.Status = inventory.StatusSeedable
+	operation.REST = &inventory.RESTDetails{
+		Method:         http.MethodGet,
+		NormalizedPath: "/",
+	}
+	invPath := filepath.Join(t.TempDir(), "inventory.json")
+	data, err := inventory.Merge([]inventory.Operation{operation}).JSON()
+	if err != nil {
+		t.Fatalf("inventory JSON returned error: %v", err)
+	}
+	if err := os.WriteFile(invPath, data, 0o600); err != nil {
+		t.Fatalf("os.WriteFile(inventory) returned error: %v", err)
+	}
+
+	outPath := filepath.Join(t.TempDir(), "bundle.json")
+	if err := run([]string{"scan", "--config", cfgPath, "--inventory", invPath, "--out", outPath}); err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	bundleData, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(bundle) returned error: %v", err)
+	}
+	var payload struct {
+		Summary struct {
+			Total     int `json:"total"`
+			Succeeded int `json:"succeeded"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(bundleData, &payload); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if payload.Summary.Total != 1 || payload.Summary.Succeeded != 1 {
+		t.Fatalf("unexpected summary: %#v", payload.Summary)
+	}
+}
+
+func TestTriStateBoolSetParsesTrueAndFalse(t *testing.T) {
+	var value triStateBool
+	if err := value.Set("true"); err != nil {
+		t.Fatalf("Set(true) returned error: %v", err)
+	}
+	if !value.set || !value.value {
+		t.Fatalf("unexpected triStateBool after true: %#v", value)
+	}
+
+	value = triStateBool{}
+	if err := value.Set("false"); err != nil {
+		t.Fatalf("Set(false) returned error: %v", err)
+	}
+	if !value.set || value.value {
+		t.Fatalf("unexpected triStateBool after false: %#v", value)
+	}
 }
