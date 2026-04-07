@@ -151,7 +151,7 @@ targets:
 
 auth_contexts:
   - name: prod-bearer
-    bearer_token_env: TOGETHER_TOKEN
+    bearer_token_env: PROD_TOKEN
 
 scan:
   concurrency: 4
