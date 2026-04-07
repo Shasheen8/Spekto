@@ -4,22 +4,22 @@
   <img src="docs/images/spekto_circular.png" alt="Spekto logo" width="220" />
 </p>
 
-Spec-first API security in Go.
+Spekto is a Go CLI for API inventory and bounded protocol execution.
 
-Spekto builds a canonical API inventory across `REST`, `GraphQL`, and `gRPC`, using specs, traffic artifacts, curated seeds, and safe active discovery. It is designed for local CLI use and for automation in CI or GitHub Actions.
+Current repository scope:
 
-## What It Does
+- `cmd/spekto` provides `discover` and `scan`
+- `internal/protocol/rest` ingests Swagger `2.0` and OpenAPI `3.0.x`, `3.1.x`, and `3.2.x`
+- `internal/protocol/graphql` ingests SDL and standard introspection JSON
+- `internal/protocol/grpc` ingests `.proto`, descriptor sets, and reflection
+- `internal/inventory` merges spec, traffic, active, and manual sources into one canonical inventory
+- `internal/executor` executes inventory-backed `REST`, `GraphQL`, and unary `gRPC` requests and writes one evidence bundle format
 
-Spekto is built around one inventory model that can:
+Current runtime limits:
 
-- ingest OpenAPI, Swagger, GraphQL SDL or introspection, gRPC proto, descriptor sets, and gRPC reflection
-- ingest HAR, Postman collections, and JSON or JSONL access-log extracts
-- ingest curated YAML or JSON seed files
-- run bounded active discovery for common spec and GraphQL entrypoints plus explicit gRPC reflection targets
-- merge overlapping sources into one canonical inventory
-- preserve provenance and confidence for each discovered operation
-- execute inventory-backed requests across `REST`, `GraphQL`, and unary `gRPC`
-- emit one evidence bundle format for CLI and CI runs
+- `scan` is an execution core, not a vulnerability engine yet
+- `gRPC` execution is unary only
+- streaming `gRPC` methods are skipped
 
 ## Build
 
@@ -27,26 +27,13 @@ Spekto is built around one inventory model that can:
 go build -o spekto ./cmd/spekto
 ```
 
-Or run a command directly:
-
-```bash
-go run ./cmd/spekto discover spec --openapi openapi.yaml
-```
-
 ## Commands
-
-- `spekto discover spec`
-- `spekto discover traffic`
-- `spekto discover manual`
-- `spekto discover active`
-- `spekto discover merge`
-- `spekto scan`
 
 ### `discover spec`
 
-Build inventory from protocol-native specification inputs.
+Build canonical inventory from protocol-native inputs.
 
-Supported flags:
+Flags:
 
 - `--openapi`
 - `--graphql-schema`
@@ -59,18 +46,14 @@ Supported flags:
 Example:
 
 ```bash
-./spekto discover spec \
-  --openapi openapi.yaml \
-  --graphql-schema schema.graphql \
-  --descriptor-set api.pb \
-  --out inventory.json
+./spekto discover spec --openapi openapi.yaml --graphql-schema schema.graphql --descriptor-set api.pb --out inventory.json
 ```
 
 ### `discover traffic`
 
-Build inventory from observed traffic artifacts.
+Build canonical inventory from observed traffic.
 
-Supported flags:
+Flags:
 
 - `--har`
 - `--postman`
@@ -80,18 +63,14 @@ Supported flags:
 Example:
 
 ```bash
-./spekto discover traffic \
-  --har traffic.har \
-  --postman collection.json \
-  --access-log access.jsonl \
-  --out observed.json
+./spekto discover traffic --har traffic.har --postman collection.json --access-log access.jsonl --out observed.json
 ```
 
 ### `discover manual`
 
-Build inventory from curated endpoint seeds.
+Build canonical inventory from curated YAML or JSON seeds.
 
-Supported flags:
+Flags:
 
 - `--seed`
 - `--out`
@@ -99,16 +78,14 @@ Supported flags:
 Example:
 
 ```bash
-./spekto discover manual \
-  --seed manual-endpoints.yaml \
-  --out manual.json
+./spekto discover manual --seed manual-endpoints.yaml --out manual.json
 ```
 
 ### `discover active`
 
-Run bounded active discovery against safe targets.
+Run bounded active discovery.
 
-Supported flags:
+Flags:
 
 - `--base-url`
 - `--grpc-reflection`
@@ -117,17 +94,14 @@ Supported flags:
 Example:
 
 ```bash
-./spekto discover active \
-  --base-url https://api.example.com \
-  --grpc-reflection grpc.example.com:443 \
-  --out active.json
+./spekto discover active --base-url https://api.example.com --grpc-reflection grpc.example.com:443 --out active.json
 ```
 
 ### `discover merge`
 
-Merge previously generated canonical inventory files.
+Merge existing canonical inventory files.
 
-Supported flags:
+Flags:
 
 - `--inventory`
 - `--out`
@@ -135,77 +109,14 @@ Supported flags:
 Example:
 
 ```bash
-./spekto discover merge \
-  --inventory spec.json \
-  --inventory observed.json \
-  --inventory manual.json \
-  --out merged.json
+./spekto discover merge --inventory spec.json --inventory observed.json --inventory manual.json --out merged.json
 ```
 
-## Supported Inputs
+### `scan`
 
-### REST
+Execute scoped requests from a canonical inventory using config-defined targets and auth contexts.
 
-- Swagger `2.0`
-- OpenAPI `3.0.x`
-- OpenAPI `3.1.x`
-- OpenAPI `3.2.x`
-
-### GraphQL
-
-- SDL
-- standard introspection JSON
-
-### gRPC
-
-- `.proto` files
-- descriptor sets
-- server reflection
-
-### Traffic and Curated Sources
-
-- HAR
-- Postman collections
-- JSON or JSONL access-log extracts
-- manual YAML or JSON seed files
-
-## Output
-
-Spekto emits:
-
-- canonical inventory JSON for discovery workflows
-- evidence bundle JSON for scan workflows
-
-Each operation includes:
-
-- stable operation ID
-- protocol and locator
-- provenance flags
-- confidence score
-- auth hints
-- schema references
-- protocol-specific metadata
-- derived inventory signals
-
-Current derived signals include:
-
-- `specified_but_unseen`
-- `observed_but_undocumented`
-
-Scan results include:
-
-- target and protocol
-- operation ID and locator
-- selected auth context
-- request evidence with redacted headers
-- response evidence with truncation flags
-- bundle summary by target and protocol
-
-## `scan`
-
-Execute scoped requests from a canonical inventory using a config file.
-
-Supported flags:
+Flags:
 
 - `--config`
 - `--inventory`
@@ -221,12 +132,7 @@ Supported flags:
 Example:
 
 ```bash
-./spekto scan \
-  --config spekto.yaml \
-  --inventory inventory.json \
-  --target rest-prod \
-  --auth-context prod-bearer \
-  --out evidence.json
+./spekto scan --config spekto.yaml --inventory inventory.json --target rest-prod --auth-context prod-bearer --out evidence.json
 ```
 
 Minimal config:
@@ -256,28 +162,58 @@ scan:
   max_response_bytes: 65536
 ```
 
-## Safety Model
+## Inputs
 
-Spekto keeps discovery and execution bounded by default:
+Spekto currently accepts:
 
-- no broad brute-force path spraying
-- active HTTP probing only checks common spec and GraphQL entrypoints
-- gRPC active discovery only uses reflection targets you pass explicitly
-- inventory generation is read-only
-- request execution uses timeouts, bounded response reads, and worker limits
+- Swagger `2.0`
+- OpenAPI `3.0.x`, `3.1.x`, `3.2.x`
+- GraphQL SDL
+- GraphQL introspection JSON
+- `.proto` files
+- descriptor sets
+- gRPC reflection targets
+- HAR
+- Postman collections
+- JSON or JSONL access-log extracts
+- manual YAML or JSON seed files
+
+## Outputs
+
+`discover` writes canonical inventory JSON with:
+
+- stable operation IDs
+- protocol locators
+- provenance flags
+- confidence
+- auth hints
+- schema references
+- protocol-specific metadata
+- derived signals such as `specified_but_unseen` and `observed_but_undocumented`
+
+`scan` writes evidence bundle JSON with:
+
+- target and protocol
+- operation ID and locator
+- selected auth context
+- request evidence
+- response evidence
+- summary by target and protocol
+
+## Safety Defaults
+
+- no brute-force path spraying
+- active HTTP discovery is limited to common spec and GraphQL entrypoints
+- gRPC active discovery only uses explicit reflection targets
 - HTTP redirects are disabled by default
 - HTTP retries are limited to safe methods
-- scan output redacts credentials from headers, cookies, and API-key query params
-- gRPC execution is limited to unary methods in the current runtime
-
-## Why Spekto
-
-Most API tools are either spec parsers or payload runners. Spekto is meant to bridge the gap: build one inventory from what is documented, what is observed, and what is actually exposed, then use that inventory as the basis for later security checks.
+- response bodies are size-bounded
+- request execution uses worker limits and optional rate limiting
+- credentials are redacted from headers, cookies, and API-key query params
 
 ## Development
 
-Run the test suite:
-
 ```bash
 go test ./...
+go vet ./...
 ```
