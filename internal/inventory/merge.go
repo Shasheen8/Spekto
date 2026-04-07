@@ -11,12 +11,14 @@ type Inventory struct {
 }
 
 type Summary struct {
-	Total          int            `json:"total"`
-	ByProtocol     map[string]int `json:"by_protocol,omitempty"`
-	SpecifiedCount int            `json:"specified_count"`
-	ObservedCount  int            `json:"observed_count"`
-	ActiveCount    int            `json:"active_count"`
-	ManualCount    int            `json:"manual_count"`
+	Total                     int            `json:"total"`
+	ByProtocol                map[string]int `json:"by_protocol,omitempty"`
+	SpecifiedCount            int            `json:"specified_count"`
+	ObservedCount             int            `json:"observed_count"`
+	ActiveCount               int            `json:"active_count"`
+	ManualCount               int            `json:"manual_count"`
+	SpecifiedButUnseenCount   int            `json:"specified_but_unseen_count"`
+	ObservedUndocumentedCount int            `json:"observed_but_undocumented_count"`
 }
 
 func Merge(operationSets ...[]Operation) Inventory {
@@ -33,6 +35,7 @@ func Merge(operationSets ...[]Operation) Inventory {
 
 	ops := make([]Operation, 0, len(index))
 	for _, op := range index {
+		op = applyDerivedSignals(op)
 		ops = append(ops, op)
 	}
 	sort.Slice(ops, func(i, j int) bool {
@@ -67,6 +70,7 @@ func mergeOperation(a, b Operation) Operation {
 	out.AuthHints = mergeAuthHints(out.AuthHints, b.AuthHints)
 	out.SchemaRefs = mergeSchemaRefs(out.SchemaRefs, b.SchemaRefs)
 	out.Examples = mergeExamples(out.Examples, b.Examples)
+	out.Signals = uniqueStrings(append(out.Signals, b.Signals...))
 	out.Tags = uniqueStrings(append(out.Tags, b.Tags...))
 	out.Status = mergeStatus(out.Status, b.Status)
 	out.REST = mergeRESTDetails(out.REST, b.REST)
@@ -373,8 +377,28 @@ func summarize(ops []Operation) Summary {
 		if op.Provenance.ManuallySeeded {
 			s.ManualCount++
 		}
+		for _, signal := range op.Signals {
+			switch signal {
+			case "specified_but_unseen":
+				s.SpecifiedButUnseenCount++
+			case "observed_but_undocumented":
+				s.ObservedUndocumentedCount++
+			}
+		}
 	}
 	return s
+}
+
+func applyDerivedSignals(op Operation) Operation {
+	signals := append([]string(nil), op.Signals...)
+	if op.Provenance.Specified && !op.Provenance.Observed {
+		signals = append(signals, "specified_but_unseen")
+	}
+	if op.Provenance.Observed && !op.Provenance.Specified {
+		signals = append(signals, "observed_but_undocumented")
+	}
+	op.Signals = uniqueStrings(signals)
+	return op
 }
 
 func uniqueStrings(values []string) []string {

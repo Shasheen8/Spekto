@@ -172,7 +172,7 @@ func introspectionRootOperations(typeMap map[string]introspectionType, rootName,
 			args = append(args, fmt.Sprintf("%s:%s", arg.Name, renderIntrospectionType(arg.Type)))
 		}
 		sort.Strings(args)
-		ops = append(ops, newGraphQLOperation(rootKind, field.Name, args, typeDeps, doc.SourceRef))
+		ops = append(ops, newGraphQLOperation(rootKind, field.Name, args, introspectionSelectionHints(typeMap, field.Type), typeDeps, doc.SourceRef))
 	}
 	return ops
 }
@@ -180,17 +180,17 @@ func introspectionRootOperations(typeMap map[string]introspectionType, rootName,
 func extractSchemaOperations(schema *ast.Schema, doc *Document) []inventory.Operation {
 	var operations []inventory.Operation
 	if schema.Query != nil {
-		queryOps := schemaRootOperations(schema.Query, "query", doc.SourceRef)
+		queryOps := schemaRootOperations(schema, schema.Query, "query", doc.SourceRef)
 		doc.SchemaStats.QueryCount = len(queryOps)
 		operations = append(operations, queryOps...)
 	}
 	if schema.Mutation != nil {
-		mutationOps := schemaRootOperations(schema.Mutation, "mutation", doc.SourceRef)
+		mutationOps := schemaRootOperations(schema, schema.Mutation, "mutation", doc.SourceRef)
 		doc.SchemaStats.MutationCount = len(mutationOps)
 		operations = append(operations, mutationOps...)
 	}
 	if schema.Subscription != nil {
-		subscriptionOps := schemaRootOperations(schema.Subscription, "subscription", doc.SourceRef)
+		subscriptionOps := schemaRootOperations(schema, schema.Subscription, "subscription", doc.SourceRef)
 		doc.SchemaStats.SubscriptionCount = len(subscriptionOps)
 		operations = append(operations, subscriptionOps...)
 	}
@@ -198,7 +198,7 @@ func extractSchemaOperations(schema *ast.Schema, doc *Document) []inventory.Oper
 	return operations
 }
 
-func schemaRootOperations(def *ast.Definition, rootKind string, sourceRef inventory.SourceRef) []inventory.Operation {
+func schemaRootOperations(schema *ast.Schema, def *ast.Definition, rootKind string, sourceRef inventory.SourceRef) []inventory.Operation {
 	ops := make([]inventory.Operation, 0, len(def.Fields))
 	for _, field := range def.Fields {
 		if strings.HasPrefix(field.Name, "__") {
@@ -210,12 +210,12 @@ func schemaRootOperations(def *ast.Definition, rootKind string, sourceRef invent
 		}
 		sort.Strings(args)
 		typeDeps := []string{renderASTType(field.Type)}
-		ops = append(ops, newGraphQLOperation(rootKind, field.Name, args, typeDeps, sourceRef))
+		ops = append(ops, newGraphQLOperation(rootKind, field.Name, args, schemaSelectionHints(schema, field.Type), typeDeps, sourceRef))
 	}
 	return ops
 }
 
-func newGraphQLOperation(rootKind, fieldName string, args, typeDeps []string, sourceRef inventory.SourceRef) inventory.Operation {
+func newGraphQLOperation(rootKind, fieldName string, args, selectionHints, typeDeps []string, sourceRef inventory.SourceRef) inventory.Operation {
 	signature := fieldName
 	if len(args) > 0 {
 		signature = fmt.Sprintf("%s(%s)", fieldName, strings.Join(args, ","))
@@ -245,8 +245,101 @@ func newGraphQLOperation(rootKind, fieldName string, args, typeDeps []string, so
 			OperationName:  fieldName,
 			ArgumentMap:    args,
 			TypeDeps:       typeDeps,
-			SelectionHints: nil,
+			SelectionHints: selectionHints,
 		},
+	}
+}
+
+func schemaSelectionHints(schema *ast.Schema, typ *ast.Type) []string {
+	if schema == nil || typ == nil {
+		return nil
+	}
+	name := namedASTType(typ)
+	if name == "" {
+		return nil
+	}
+	def := schema.Types[name]
+	if def == nil {
+		return nil
+	}
+	hints := make([]string, 0, len(def.Fields))
+	for _, field := range def.Fields {
+		if strings.HasPrefix(field.Name, "__") {
+			continue
+		}
+		if isLeafASTType(schema, field.Type) {
+			hints = append(hints, field.Name)
+		}
+	}
+	return inventory.SortStringsStable(hints)
+}
+
+func introspectionSelectionHints(typeMap map[string]introspectionType, typ introspectionTypeRef) []string {
+	name := namedIntrospectionType(typ)
+	if name == "" {
+		return nil
+	}
+	def, ok := typeMap[name]
+	if !ok {
+		return nil
+	}
+	hints := make([]string, 0, len(def.Fields))
+	for _, field := range def.Fields {
+		if strings.HasPrefix(field.Name, "__") {
+			continue
+		}
+		if isLeafIntrospectionType(field.Type) {
+			hints = append(hints, field.Name)
+		}
+	}
+	return inventory.SortStringsStable(hints)
+}
+
+func namedASTType(typ *ast.Type) string {
+	if typ == nil {
+		return ""
+	}
+	if typ.Elem != nil {
+		return namedASTType(typ.Elem)
+	}
+	return typ.NamedType
+}
+
+func isLeafASTType(schema *ast.Schema, typ *ast.Type) bool {
+	name := namedASTType(typ)
+	if name == "" {
+		return false
+	}
+	def := schema.Types[name]
+	if def == nil {
+		return true
+	}
+	switch def.Kind {
+	case ast.Scalar, ast.Enum:
+		return true
+	default:
+		return false
+	}
+}
+
+func namedIntrospectionType(typ introspectionTypeRef) string {
+	if typ.OfType != nil {
+		return namedIntrospectionType(*typ.OfType)
+	}
+	return typ.Name
+}
+
+func isLeafIntrospectionType(typ introspectionTypeRef) bool {
+	switch typ.Kind {
+	case "SCALAR", "ENUM":
+		return true
+	case "NON_NULL", "LIST":
+		if typ.OfType == nil {
+			return false
+		}
+		return isLeafIntrospectionType(*typ.OfType)
+	default:
+		return false
 	}
 }
 

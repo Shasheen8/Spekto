@@ -20,6 +20,7 @@ type SourceKind string
 const (
 	SourceKindDescriptorSet SourceKind = "descriptor_set"
 	SourceKindProtoFiles    SourceKind = "proto_files"
+	SourceKindReflection    SourceKind = "reflection"
 )
 
 type Document struct {
@@ -134,14 +135,24 @@ func extractOperations(files *protoregistry.Files, sourceRef inventory.SourceRef
 
 func newGRPCOperation(pkg string, service protoreflect.ServiceDescriptor, method protoreflect.MethodDescriptor, sourceRef inventory.SourceRef) inventory.Operation {
 	serviceName := string(service.Name())
+	return newGRPCOperationFields(
+		pkg,
+		serviceName,
+		string(method.Name()),
+		fullName(method.Input()),
+		fullName(method.Output()),
+		streamingMode(method),
+		sourceRef,
+	)
+}
+
+func newGRPCOperationFields(pkg, serviceName, rpcName, inputName, outputName, mode string, sourceRef inventory.SourceRef) inventory.Operation {
 	fullServiceName := serviceName
 	if pkg != "" {
 		fullServiceName = pkg + "." + serviceName
 	}
-	locator := fullServiceName + "/" + string(method.Name())
+	locator := fullServiceName + "/" + rpcName
 
-	inputName := fullName(method.Input())
-	outputName := fullName(method.Output())
 	responseMap := map[string]string{}
 	if outputName != "" {
 		responseMap["grpc"] = outputName
@@ -169,8 +180,8 @@ func newGRPCOperation(pkg string, service protoreflect.ServiceDescriptor, method
 		GRPC: &inventory.GRPCDetails{
 			Package:       pkg,
 			Service:       serviceName,
-			RPC:           string(method.Name()),
-			StreamingMode: streamingMode(method),
+			RPC:           rpcName,
+			StreamingMode: mode,
 			RequestMsg:    inputName,
 			ResponseMsg:   outputName,
 		},

@@ -66,6 +66,9 @@ func TestParseSDLExtractsOperations(t *testing.T) {
 	if len(create.GraphQL.TypeDeps) != 1 || create.GraphQL.TypeDeps[0] != "Model!" {
 		t.Fatalf("unexpected type dependencies: %#v", create.GraphQL.TypeDeps)
 	}
+	if len(create.GraphQL.SelectionHints) != 2 || create.GraphQL.SelectionHints[0] != "id" || create.GraphQL.SelectionHints[1] != "name" {
+		t.Fatalf("unexpected selection hints: %#v", create.GraphQL.SelectionHints)
+	}
 }
 
 func TestParseIntrospectionExtractsOperations(t *testing.T) {
@@ -109,6 +112,17 @@ func TestParseIntrospectionExtractsOperations(t *testing.T) {
 	              "type": {"kind": "SCALAR", "name": "Boolean", "ofType": null}
 	            }
 	          ]
+	        },
+	        {
+	          "kind": "OBJECT",
+	          "name": "Model",
+	          "fields": [
+	            {
+	              "name": "id",
+	              "args": [],
+	              "type": {"kind": "NON_NULL", "name": null, "ofType": {"kind": "SCALAR", "name": "ID", "ofType": null}}
+	            }
+	          ]
 	        }
 	      ]
 	    }
@@ -144,6 +158,9 @@ func TestParseIntrospectionExtractsOperations(t *testing.T) {
 	}
 	if len(query.GraphQL.TypeDeps) != 1 || query.GraphQL.TypeDeps[0] != "Model" {
 		t.Fatalf("unexpected type deps: %#v", query.GraphQL.TypeDeps)
+	}
+	if len(query.GraphQL.SelectionHints) != 1 || query.GraphQL.SelectionHints[0] != "id" {
+		t.Fatalf("unexpected selection hints: %#v", query.GraphQL.SelectionHints)
 	}
 	if query.Provenance.Specified != true {
 		t.Fatalf("expected specified provenance")

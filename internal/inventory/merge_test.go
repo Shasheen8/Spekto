@@ -49,6 +49,9 @@ func TestMergeDedupesByIDAndCombinesMetadata(t *testing.T) {
 	if !op.Provenance.Specified || !op.Provenance.Observed {
 		t.Fatalf("expected merged provenance, got %#v", op.Provenance)
 	}
+	if len(op.Signals) != 0 {
+		t.Fatalf("expected no unresolved provenance signals, got %#v", op.Signals)
+	}
 	if op.Confidence <= 0.9 {
 		t.Fatalf("expected confidence boost after merge, got %f", op.Confidence)
 	}
@@ -60,5 +63,38 @@ func TestMergeDedupesByIDAndCombinesMetadata(t *testing.T) {
 	}
 	if merged.Summary.Total != 1 || merged.Summary.ByProtocol["rest"] != 1 {
 		t.Fatalf("unexpected summary: %#v", merged.Summary)
+	}
+}
+
+func TestMergeMarksSpecifiedButUnseenAndObservedUndocumented(t *testing.T) {
+	specified := NewRESTOperation("GET", "/v1/spec-only")
+	specified.Provenance = Provenance{Specified: true}
+
+	observed := NewRESTOperation("POST", "/v1/traffic-only")
+	observed.Provenance = Provenance{Observed: true}
+
+	merged := Merge([]Operation{specified, observed})
+	if len(merged.Operations) != 2 {
+		t.Fatalf("expected 2 operations, got %d", len(merged.Operations))
+	}
+
+	var specSignals []string
+	var observedSignals []string
+	for _, op := range merged.Operations {
+		switch op.Locator {
+		case "GET:/v1/spec-only":
+			specSignals = op.Signals
+		case "POST:/v1/traffic-only":
+			observedSignals = op.Signals
+		}
+	}
+	if len(specSignals) != 1 || specSignals[0] != "specified_but_unseen" {
+		t.Fatalf("unexpected spec signals: %#v", specSignals)
+	}
+	if len(observedSignals) != 1 || observedSignals[0] != "observed_but_undocumented" {
+		t.Fatalf("unexpected observed signals: %#v", observedSignals)
+	}
+	if merged.Summary.SpecifiedButUnseenCount != 1 || merged.Summary.ObservedUndocumentedCount != 1 {
+		t.Fatalf("unexpected summary counts: %#v", merged.Summary)
 	}
 }

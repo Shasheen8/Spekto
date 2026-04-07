@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -40,7 +41,49 @@ func ParseFile(ctx context.Context, path string) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ParseData(ctx, data, path)
+	version, family, level, warnings, err := detectVersion(data)
+	if err != nil {
+		return nil, err
+	}
+
+	doc := &Document{
+		DeclaredVersion: version,
+		ParserFamily:    family,
+		SupportLevel:    level,
+		Warnings:        append([]string(nil), warnings...),
+		SourceRef: inventory.SourceRef{
+			Type:         inventory.SourceSpec,
+			Location:     path,
+			ParserFamily: string(family),
+			SupportLevel: level,
+			Warnings:     append([]string(nil), warnings...),
+		},
+	}
+
+	switch {
+	case strings.HasPrefix(version, "2.0"):
+		doc3, err := parseSwagger2(data)
+		if err != nil {
+			return nil, err
+		}
+		ops, extractWarnings := extractOpenAPI3(doc3, doc.SourceRef)
+		doc.Warnings = append(doc.Warnings, extractWarnings...)
+		doc.SourceRef.Warnings = append(doc.SourceRef.Warnings, extractWarnings...)
+		doc.Operations = ops
+		return doc, nil
+	case strings.HasPrefix(version, "3."):
+		doc3, err := parseOpenAPI3File(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		ops, extractWarnings := extractOpenAPI3(doc3, doc.SourceRef)
+		doc.Warnings = append(doc.Warnings, extractWarnings...)
+		doc.SourceRef.Warnings = append(doc.SourceRef.Warnings, extractWarnings...)
+		doc.Operations = ops
+		return doc, nil
+	default:
+		return nil, fmt.Errorf("unsupported spec version: %s", version)
+	}
 }
 
 func ParseData(ctx context.Context, data []byte, source string) (*Document, error) {
@@ -154,6 +197,16 @@ func parseOpenAPI3(ctx context.Context, data []byte, source string) (*openapi3.T
 	return loader.LoadFromData(data)
 }
 
+func parseOpenAPI3File(ctx context.Context, path string) (*openapi3.T, error) {
+	loader := openapi3.NewLoader()
+	loader.Context = ctx
+	loader.IsExternalRefsAllowed = true
+	if abs, err := filepath.Abs(path); err == nil {
+		return loader.LoadFromFile(abs)
+	}
+	return loader.LoadFromFile(path)
+}
+
 func extractOpenAPI3(doc *openapi3.T, sourceRef inventory.SourceRef) ([]inventory.Operation, []string) {
 	var warnings []string
 	if doc == nil {
@@ -253,6 +306,9 @@ func extractOpenAPI3(doc *openapi3.T, sourceRef inventory.SourceRef) ([]inventor
 			}
 
 			op.AuthHints = authHintsFromSecurity(doc.Security, pair.op.Security)
+			if len(pair.op.Callbacks) > 0 {
+				warnings = append(warnings, fmt.Sprintf("operation %s defines callbacks that are not yet ingested", op.Locator))
+			}
 			operations = append(operations, op)
 		}
 	}

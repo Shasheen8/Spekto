@@ -93,6 +93,7 @@ type Operation struct {
 	AuthHints   AuthHints       `json:"auth_hints"`
 	SchemaRefs  SchemaRefs      `json:"schema_refs"`
 	Examples    Examples        `json:"examples,omitempty"`
+	Signals     []string        `json:"signals,omitempty"`
 	Tags        []string        `json:"tags,omitempty"`
 	Status      InventoryStatus `json:"status"`
 

@@ -2,6 +2,8 @@ package rest
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Shasheen8/Spekto/internal/inventory"
@@ -224,5 +226,79 @@ paths:
 	}
 	if op.REST == nil || op.REST.NormalizedPath != "/v1/health" {
 		t.Fatalf("unexpected normalized path")
+	}
+}
+
+func TestParseFileResolvesLocalExternalRefs(t *testing.T) {
+	dir := t.TempDir()
+	componentsPath := filepath.Join(dir, "schemas.yaml")
+	componentsDoc := `
+Model:
+  type: object
+`
+	if err := os.WriteFile(componentsPath, []byte(componentsDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(components) returned error: %v", err)
+	}
+
+	specPath := filepath.Join(dir, "openapi.yaml")
+	specDoc := `
+openapi: 3.1.0
+info:
+  title: External Ref Test
+  version: 1.0.0
+paths:
+  /v1/models:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: './schemas.yaml#/Model'
+`
+	if err := os.WriteFile(specPath, []byte(specDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(spec) returned error: %v", err)
+	}
+
+	parsed, err := ParseFile(context.Background(), specPath)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(parsed.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(parsed.Operations))
+	}
+	if parsed.Operations[0].SchemaRefs.Responses["200"] == "" {
+		t.Fatalf("expected resolved response schema ref")
+	}
+}
+
+func TestParseDataEmitsCallbackWarnings(t *testing.T) {
+	doc := `
+openapi: 3.1.0
+info:
+  title: Callback Test
+  version: 1.0.0
+paths:
+  /v1/models:
+    post:
+      callbacks:
+        onEvent:
+          '{$request.body#/callbackUrl}':
+            post:
+              responses:
+                "200":
+                  description: ok
+      responses:
+        "202":
+          description: accepted
+`
+
+	parsed, err := ParseData(context.Background(), []byte(doc), "spec.yaml")
+	if err != nil {
+		t.Fatalf("ParseData returned error: %v", err)
+	}
+	if len(parsed.Warnings) == 0 {
+		t.Fatalf("expected callback warning")
 	}
 }
