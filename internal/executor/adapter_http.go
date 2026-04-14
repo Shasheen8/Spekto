@@ -8,15 +8,17 @@ import (
 	"path"
 	"strings"
 
+	"github.com/Shasheen8/Spekto/internal/config"
 	"github.com/Shasheen8/Spekto/internal/inventory"
+	"github.com/Shasheen8/Spekto/internal/seed"
 )
 
-func buildRESTRequests(targetBaseURL string, operation inventory.Operation, authContextNames []string) ([]HTTPRequest, error) {
+func buildRESTRequests(targetBaseURL string, operation inventory.Operation, authContextNames []string, hints config.ResourceHints) ([]HTTPRequest, error) {
 	if operation.REST == nil {
 		return nil, fmt.Errorf("rest operation %q is missing rest details", operation.ID)
 	}
-
-	requestURL, err := resolveRESTURL(targetBaseURL, operation.REST.NormalizedPath, operation.REST.PathParams, operation.REST.QueryParams, operation.Examples)
+	candidate := seed.GenerateRESTCandidate(operation, hints)
+	requestURL, err := resolveRESTURL(targetBaseURL, operation.REST.NormalizedPath, candidate.PathValues, candidate.QueryValues)
 	if err != nil {
 		return nil, err
 	}
@@ -24,8 +26,6 @@ func buildRESTRequests(targetBaseURL string, operation inventory.Operation, auth
 	if method == "" {
 		method = http.MethodGet
 	}
-	body, contentType := restBody(operation)
-
 	assignments := authAssignments(authContextNames)
 	requests := make([]HTTPRequest, 0, len(assignments))
 	for _, authContextName := range assignments {
@@ -34,9 +34,10 @@ func buildRESTRequests(targetBaseURL string, operation inventory.Operation, auth
 			OperationID:     operation.ID,
 			Method:          method,
 			URL:             requestURL,
-			Body:            body,
-			ContentType:     contentType,
+			Body:            candidate.Body,
+			ContentType:     candidate.ContentType,
 			AuthContextName: authContextName,
+			SchemaGaps:      candidate.SchemaGaps,
 		})
 	}
 	return requests, nil
@@ -54,7 +55,6 @@ func buildGraphQLRequests(endpoint string, operation inventory.Operation, authCo
 	if err != nil {
 		return nil, err
 	}
-
 	assignments := authAssignments(authContextNames)
 	requests := make([]HTTPRequest, 0, len(assignments))
 	for _, authContextName := range assignments {
@@ -71,72 +71,33 @@ func buildGraphQLRequests(endpoint string, operation inventory.Operation, authCo
 	return requests, nil
 }
 
-func resolveRESTURL(baseURL string, normalizedPath string, pathParams []inventory.ParameterMeta, queryParams []inventory.ParameterMeta, examples inventory.Examples) (string, error) {
+// resolveRESTURL constructs the full request URL from a base URL, path template,
+// and resolved path/query parameter maps.
+func resolveRESTURL(baseURL, normalizedPath string, pathValues, queryValues map[string]string) (string, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return "", err
 	}
-	joinedPath := normalizedPath
-	if joinedPath == "" {
-		joinedPath = "/"
+	joined := normalizedPath
+	if joined == "" {
+		joined = "/"
 	}
-	replacedPath := joinedPath
-	for _, param := range pathParams {
-		replacedPath = strings.ReplaceAll(replacedPath, "{"+param.Name+"}", url.PathEscape(restParameterValue(param, examples)))
+	replaced := joined
+	for name, value := range pathValues {
+		replaced = strings.ReplaceAll(replaced, "{"+name+"}", url.PathEscape(value))
 	}
-	parsed.Path = path.Join(strings.TrimSuffix(parsed.Path, "/"), strings.TrimPrefix(replacedPath, "/"))
-	if strings.HasSuffix(replacedPath, "/") && !strings.HasSuffix(parsed.Path, "/") {
+	parsed.Path = path.Join(strings.TrimSuffix(parsed.Path, "/"), strings.TrimPrefix(replaced, "/"))
+	if strings.HasSuffix(replaced, "/") && !strings.HasSuffix(parsed.Path, "/") {
 		parsed.Path += "/"
 	}
-
-	query := parsed.Query()
-	for _, param := range queryParams {
-		query.Set(param.Name, restParameterValue(param, examples))
+	if len(queryValues) > 0 {
+		q := parsed.Query()
+		for name, value := range queryValues {
+			q.Set(name, value)
+		}
+		parsed.RawQuery = q.Encode()
 	}
-	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
-}
-
-func restParameterValue(param inventory.ParameterMeta, examples inventory.Examples) string {
-	for _, example := range examples.Parameters {
-		if example.Name != param.Name || !strings.EqualFold(example.In, param.In) {
-			continue
-		}
-		switch {
-		case strings.TrimSpace(example.Example) != "":
-			return example.Example
-		case strings.TrimSpace(example.Default) != "":
-			return example.Default
-		}
-	}
-	if strings.TrimSpace(param.Default) != "" {
-		return param.Default
-	}
-	switch strings.ToLower(param.Type) {
-	case "int", "integer":
-		return "1"
-	case "number", "float", "double":
-		return "1.0"
-	case "boolean":
-		return "true"
-	default:
-		return "sample"
-	}
-}
-
-func restBody(operation inventory.Operation) ([]byte, string) {
-	if len(operation.Examples.RequestBodies) > 0 {
-		example := operation.Examples.RequestBodies[0]
-		return []byte(example.Value), defaultString(example.MediaType, "application/json")
-	}
-	if operation.REST == nil || operation.REST.RequestBody == nil || len(operation.REST.RequestBody.Content) == 0 {
-		return nil, ""
-	}
-	content := operation.REST.RequestBody.Content[0]
-	if strings.Contains(strings.ToLower(content.MediaType), "json") {
-		return []byte("{}"), defaultString(content.MediaType, "application/json")
-	}
-	return nil, content.MediaType
 }
 
 func graphqlQuery(operation inventory.Operation) string {
@@ -157,7 +118,6 @@ func graphqlQuery(operation inventory.Operation) string {
 	if len(args) > 0 {
 		argString = "(" + strings.Join(args, ", ") + ")"
 	}
-
 	selectionHints := operation.GraphQL.SelectionHints
 	if len(selectionHints) == 0 {
 		return fmt.Sprintf("%s { %s%s }", rootKind, name, argString)
@@ -171,7 +131,6 @@ func graphqlLiteral(typeName string) string {
 	normalized = strings.TrimSuffix(normalized, "!")
 	normalized = strings.TrimPrefix(normalized, "[")
 	normalized = strings.TrimSuffix(normalized, "]")
-
 	switch normalized {
 	case "Int":
 		return "1"
@@ -200,9 +159,3 @@ func authAssignments(names []string) []string {
 	return append([]string(nil), names...)
 }
 
-func defaultString(value string, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
-}

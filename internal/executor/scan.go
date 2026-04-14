@@ -17,6 +17,7 @@ type ScanOptions struct {
 	IncludeTargets []string
 	ExcludeTargets []string
 	AuthContexts   []string
+	ResourceHints  config.ResourceHints
 }
 
 func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, options ScanOptions) (Bundle, error) {
@@ -51,7 +52,7 @@ func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, optio
 		operations := selectTargetOperations(inv.Operations, target)
 		switch target.Protocol {
 		case "rest":
-			results, err := scanRESTTarget(ctx, target, operations, registry, policy, options.AuthContexts)
+			results, err := scanRESTTarget(ctx, target, operations, registry, policy, options.AuthContexts, options.ResourceHints)
 			if err != nil {
 				return Bundle{}, err
 			}
@@ -78,9 +79,10 @@ func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, optio
 	return bundle, nil
 }
 
-func scanRESTTarget(ctx context.Context, target config.Target, operations []inventory.Operation, registry auth.Registry, policy HTTPPolicy, selectedAuthContexts []string) ([]Result, error) {
+func scanRESTTarget(ctx context.Context, target config.Target, operations []inventory.Operation, registry auth.Registry, policy HTTPPolicy, selectedAuthContexts []string, hints config.ResourceHints) ([]Result, error) {
 	requests := make([]HTTPRequest, 0)
 	requestMeta := map[string]inventory.Operation{}
+	requestGaps := map[string][]string{}
 	results := make([]Result, 0)
 
 	for _, operation := range operations {
@@ -92,13 +94,16 @@ func scanRESTTarget(ctx context.Context, target config.Target, operations []inve
 			results = append(results, *skipResult)
 			continue
 		}
-		built, err := buildRESTRequests(target.BaseURL, operation, authContextNames)
+		built, err := buildRESTRequests(target.BaseURL, operation, authContextNames, hints)
 		if err != nil {
 			return nil, err
 		}
 		for _, request := range built {
 			requests = append(requests, request)
 			requestMeta[request.ID] = operation
+			if len(request.SchemaGaps) > 0 {
+				requestGaps[request.ID] = request.SchemaGaps
+			}
 		}
 	}
 
@@ -106,7 +111,7 @@ func scanRESTTarget(ctx context.Context, target config.Target, operations []inve
 	if err != nil {
 		return nil, err
 	}
-	results = append(results, convertHTTPResults(target, requestMeta, httpResults)...)
+	results = append(results, convertHTTPResults(target, requestMeta, requestGaps, httpResults)...)
 	return results, nil
 }
 
@@ -143,11 +148,11 @@ func scanGraphQLTarget(ctx context.Context, target config.Target, operations []i
 	if err != nil {
 		return nil, err
 	}
-	results = append(results, convertHTTPResults(target, requestMeta, httpResults)...)
+	results = append(results, convertHTTPResults(target, requestMeta, nil, httpResults)...)
 	return results, nil
 }
 
-func convertHTTPResults(target config.Target, operations map[string]inventory.Operation, httpResults []HTTPResult) []Result {
+func convertHTTPResults(target config.Target, operations map[string]inventory.Operation, gaps map[string][]string, httpResults []HTTPResult) []Result {
 	results := make([]Result, 0, len(httpResults))
 	for _, httpResult := range httpResults {
 		operation := operations[httpResult.RequestID]
@@ -158,7 +163,7 @@ func convertHTTPResults(target config.Target, operations map[string]inventory.Op
 		case httpResult.Error == "" && httpResult.StatusCode >= 200 && httpResult.StatusCode < 400:
 			status = "succeeded"
 		}
-		results = append(results, Result{
+		r := Result{
 			Protocol:        operation.Protocol,
 			Target:          target.Name,
 			OperationID:     httpResult.OperationID,
@@ -174,7 +179,8 @@ func convertHTTPResults(target config.Target, operations map[string]inventory.Op
 					Method:      httpResult.Method,
 					URL:         httpResult.URL,
 					Headers:     httpResult.RequestHeaders,
-					ContentType: httpResult.RequestHeaders["Content-Type"],
+					ContentType: httpResult.RequestContentType,
+					Body:        httpResult.RequestBody,
 				},
 				Response: ResponseEvidence{
 					StatusCode: httpResult.StatusCode,
@@ -183,7 +189,11 @@ func convertHTTPResults(target config.Target, operations map[string]inventory.Op
 					Truncated:  httpResult.Truncated,
 				},
 			},
-		})
+		}
+		if gaps != nil {
+			r.SchemaGaps = gaps[httpResult.RequestID]
+		}
+		results = append(results, r)
 	}
 	return results
 }

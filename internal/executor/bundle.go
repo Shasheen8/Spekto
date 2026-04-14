@@ -2,16 +2,18 @@ package executor
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/Shasheen8/Spekto/internal/inventory"
 )
 
 type Bundle struct {
-	StartedAt  time.Time     `json:"started_at"`
-	FinishedAt time.Time     `json:"finished_at"`
-	Results    []Result      `json:"results"`
-	Summary    BundleSummary `json:"summary"`
+	StartedAt  time.Time      `json:"started_at"`
+	FinishedAt time.Time      `json:"finished_at"`
+	Results    []Result       `json:"results"`
+	Summary    BundleSummary  `json:"summary"`
+	Coverage   CoverageReport `json:"coverage"`
 }
 
 type BundleSummary struct {
@@ -23,6 +25,28 @@ type BundleSummary struct {
 	ByTarget   map[string]int `json:"by_target,omitempty"`
 }
 
+// CoverageReport explains why each operation did or did not succeed.
+// It is intended to give operators clear signal on what is blocking coverage.
+type CoverageReport struct {
+	TotalOperations int            `json:"total_operations"`
+	Covered         int            `json:"covered"`
+	Uncovered       int            `json:"uncovered"`
+	ByReason        map[string]int `json:"by_reason,omitempty"`
+	Entries         []CoverageEntry `json:"entries,omitempty"`
+}
+
+// CoverageEntry is one line of the coverage report for a single (operation, auth context) pair.
+type CoverageEntry struct {
+	OperationID     string `json:"operation_id"`
+	Locator         string `json:"locator"`
+	Protocol        string `json:"protocol"`
+	Target          string `json:"target"`
+	AuthContextName string `json:"auth_context_name,omitempty"`
+	Status          string `json:"status"`
+	BlockReason     string `json:"block_reason,omitempty"`
+	SchemaGaps      []string `json:"schema_gaps,omitempty"`
+}
+
 type Result struct {
 	Protocol        inventory.Protocol `json:"protocol"`
 	Target          string             `json:"target"`
@@ -32,6 +56,7 @@ type Result struct {
 	AuthContextName string             `json:"auth_context_name,omitempty"`
 	Status          string             `json:"status"`
 	Error           string             `json:"error,omitempty"`
+	SchemaGaps      []string           `json:"schema_gaps,omitempty"`
 	StartedAt       time.Time          `json:"started_at"`
 	Duration        time.Duration      `json:"duration"`
 	Evidence        Evidence           `json:"evidence"`
@@ -62,6 +87,7 @@ type ResponseEvidence struct {
 
 func (b *Bundle) Finalize() {
 	b.Summary = summarizeResults(b.Results)
+	b.Coverage = buildCoverageReport(b.Results)
 }
 
 func (b Bundle) JSON() ([]byte, error) {
@@ -87,4 +113,65 @@ func summarizeResults(results []Result) BundleSummary {
 		}
 	}
 	return summary
+}
+
+// buildCoverageReport classifies each result by block reason and assembles the report.
+func buildCoverageReport(results []Result) CoverageReport {
+	report := CoverageReport{
+		TotalOperations: len(results),
+		ByReason:        map[string]int{},
+		Entries:         make([]CoverageEntry, 0, len(results)),
+	}
+	for _, r := range results {
+		entry := CoverageEntry{
+			OperationID:     r.OperationID,
+			Locator:         r.Locator,
+			Protocol:        string(r.Protocol),
+			Target:          r.Target,
+			AuthContextName: r.AuthContextName,
+			Status:          r.Status,
+			SchemaGaps:      r.SchemaGaps,
+		}
+		if r.Status == "succeeded" {
+			report.Covered++
+		} else {
+			report.Uncovered++
+			entry.BlockReason = classifyBlockReason(r)
+			report.ByReason[entry.BlockReason]++
+		}
+		report.Entries = append(report.Entries, entry)
+	}
+	return report
+}
+
+// classifyBlockReason maps a failed or skipped result to a human-readable block reason.
+// Reasons (in match priority order):
+//
+//	auth_missing          — no matching auth context was available
+//	budget_exceeded       — request budget was exhausted before this operation ran
+//	streaming_unsupported — gRPC streaming method, not yet supported
+//	schema_gap            — request failed and the seed relied only on type fallbacks
+//	bad_status            — server returned a 4xx or 5xx response
+//	network_error         — transport-level failure (timeout, connection refused, etc.)
+func classifyBlockReason(r Result) string {
+	errLower := strings.ToLower(r.Error)
+	switch {
+	case strings.Contains(errLower, "auth") || strings.Contains(errLower, "no matching auth"):
+		return "auth_missing"
+	case strings.Contains(errLower, "request budget"):
+		return "budget_exceeded"
+	case strings.Contains(errLower, "streaming"):
+		return "streaming_unsupported"
+	}
+	// Schema gap: seed used only type fallbacks and server rejected the request.
+	if len(r.SchemaGaps) > 0 && r.Evidence.Response.StatusCode >= 400 && r.Evidence.Response.StatusCode < 500 {
+		return "schema_gap"
+	}
+	if r.Evidence.Response.StatusCode >= 400 {
+		return "bad_status"
+	}
+	if r.Evidence.Response.GRPCCode != "" && r.Evidence.Response.GRPCCode != "OK" {
+		return "bad_status"
+	}
+	return "network_error"
 }

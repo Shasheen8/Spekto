@@ -17,6 +17,7 @@ import (
 	graphqldiscovery "github.com/Shasheen8/Spekto/internal/protocol/graphql"
 	grpcdiscovery "github.com/Shasheen8/Spekto/internal/protocol/grpc"
 	restdiscovery "github.com/Shasheen8/Spekto/internal/protocol/rest"
+	"github.com/Shasheen8/Spekto/internal/seed"
 )
 
 func main() {
@@ -355,6 +356,7 @@ func runScan(args []string) error {
 	var configPath string
 	var inventoryPath string
 	var outPath string
+	var seedStorePath string
 	var includeTargets multiValue
 	var excludeTargets multiValue
 	var authContexts multiValue
@@ -366,6 +368,7 @@ func runScan(args []string) error {
 	fs.StringVar(&configPath, "config", "", "Config file path")
 	fs.StringVar(&inventoryPath, "inventory", "", "Canonical inventory JSON file path")
 	fs.StringVar(&outPath, "out", "", "Output path for evidence bundle JSON")
+	fs.StringVar(&seedStorePath, "seed-store", "", "Path to seed store JSON file (captures successful requests)")
 	fs.Var(&includeTargets, "target", "Target name to include")
 	fs.Var(&excludeTargets, "exclude-target", "Target name to exclude")
 	fs.Var(&authContexts, "auth-context", "Auth context name to include")
@@ -402,9 +405,21 @@ func runScan(args []string) error {
 		IncludeTargets: includeTargets,
 		ExcludeTargets: excludeTargets,
 		AuthContexts:   authContexts,
+		ResourceHints:  cfg.ResourceHints,
 	})
 	if err != nil {
 		return err
+	}
+
+	// Capture successful requests as seeds (flag > config).
+	storePath := strings.TrimSpace(seedStorePath)
+	if storePath == "" {
+		storePath = strings.TrimSpace(cfg.Output.SeedStorePath)
+	}
+	if storePath != "" {
+		if err := captureSeeds(storePath, bundle); err != nil {
+			return err
+		}
 	}
 
 	data, err := bundle.JSON()
@@ -475,4 +490,38 @@ func (b *triStateBool) Set(value string) error {
 	default:
 		return fmt.Errorf("invalid boolean value %q", value)
 	}
+}
+
+// captureSeeds writes successful scan results to the seed store at storePath.
+// Existing records for the same (operation, auth context) pair are replaced.
+func captureSeeds(storePath string, bundle executor.Bundle) error {
+	store, err := seed.LoadStoreFile(storePath)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, result := range bundle.Results {
+		if result.Status != "succeeded" {
+			continue
+		}
+		store.Add(seed.Record{
+			OperationID:     result.OperationID,
+			Locator:         result.Locator,
+			Protocol:        string(result.Protocol),
+			Target:          result.Target,
+			AuthContextName: result.AuthContextName,
+			Method:          result.Evidence.Request.Method,
+			URL:             result.Evidence.Request.URL,
+			Headers:         result.Evidence.Request.Headers,
+			Body:            result.Evidence.Request.Body,
+			ContentType:     result.Evidence.Request.ContentType,
+			GRPCMethod:      result.Evidence.Request.GRPCMethod,
+			Metadata:        result.Evidence.Request.Metadata,
+			ResponseStatus:  result.Evidence.Response.StatusCode,
+			GRPCCode:        result.Evidence.Response.GRPCCode,
+			CapturedAt:      now,
+			Source:          "scan",
+		})
+	}
+	return store.Save(storePath)
 }

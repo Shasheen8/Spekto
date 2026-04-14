@@ -4,7 +4,7 @@
   <img src="docs/images/spekto_circular.png" alt="Spekto logo" width="220" />
 </p>
 
-Spekto is a Go CLI for API inventory and bounded protocol execution.
+Spekto is a Go CLI for API inventory, seed generation, and bounded protocol execution.
 
 Current repository scope:
 
@@ -13,7 +13,8 @@ Current repository scope:
 - `internal/protocol/graphql` ingests SDL and standard introspection JSON
 - `internal/protocol/grpc` ingests `.proto`, descriptor sets, and reflection
 - `internal/inventory` merges spec, traffic, active, and manual sources into one canonical inventory
-- `internal/executor` executes inventory-backed `REST`, `GraphQL`, and unary `gRPC` requests and writes one evidence bundle format
+- `internal/seed` generates request candidates from inventory metadata and operator hints; persists successful requests as seeds
+- `internal/executor` executes inventory-backed `REST`, `GraphQL`, and unary `gRPC` requests and writes one evidence bundle format with coverage diagnostics
 
 Current runtime limits:
 
@@ -127,6 +128,7 @@ Flags:
 - `--request-budget`
 - `--timeout`
 - `--follow-redirects`
+- `--seed-store`
 - `--out`
 
 Example:
@@ -160,6 +162,18 @@ scan:
   retries: 1
   rate_limit: 5
   max_response_bytes: 65536
+
+# Operator-provided seed values (optional).
+# path_params and query_params are matched by exact parameter name.
+# constants act as a fallback pool across all parameter locations.
+resource_hints:
+  path_params:
+    model_id: "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+  constants:
+    org_id: "org_abc123"
+
+output:
+  seed_store_path: seeds.json
 ```
 
 ## Inputs
@@ -198,7 +212,11 @@ Spekto currently accepts:
 - selected auth context
 - request evidence
 - response evidence
+- schema gaps (parameter names where only a type fallback was used)
 - summary by target and protocol
+- coverage report with per-result block reason classification (`auth_missing`, `budget_exceeded`, `streaming_unsupported`, `schema_gap`, `bad_status`, `network_error`)
+
+When `--seed-store` is set, successful requests are captured to a seed store JSON file keyed by (operation, auth context). The store is additive — re-running a scan updates only the records that succeed.
 
 ## Safety Defaults
 

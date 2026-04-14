@@ -465,6 +465,104 @@ func TestRunScanWritesBundle(t *testing.T) {
 	}
 }
 
+func TestRunScanCapturesSeeds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+
+	cfgPath := filepath.Join(dir, "spekto.yaml")
+	configDoc := "targets:\n  - name: rest\n    protocol: rest\n    base_url: " + server.URL + "\nscan:\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	operation := inventory.NewRESTOperation(http.MethodGet, "/v1/items")
+	operation.DisplayName = "list items"
+	operation.Confidence = 0.9
+	operation.Status = inventory.StatusSeedable
+	operation.REST = &inventory.RESTDetails{
+		Method:         http.MethodGet,
+		NormalizedPath: "/v1/items",
+	}
+	invPath := filepath.Join(dir, "inventory.json")
+	invData, err := inventory.Merge([]inventory.Operation{operation}).JSON()
+	if err != nil {
+		t.Fatalf("inventory JSON returned error: %v", err)
+	}
+	if err := os.WriteFile(invPath, invData, 0o600); err != nil {
+		t.Fatalf("os.WriteFile(inventory) returned error: %v", err)
+	}
+
+	seedPath := filepath.Join(dir, "seeds.json")
+	outPath := filepath.Join(dir, "bundle.json")
+	if err := run([]string{"scan", "--config", cfgPath, "--inventory", invPath, "--seed-store", seedPath, "--out", outPath}); err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	seedData, err := os.ReadFile(seedPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(seeds) returned error: %v", err)
+	}
+	var store struct {
+		Records []struct {
+			OperationID    string `json:"operation_id"`
+			ResponseStatus int    `json:"response_status"`
+			Source         string `json:"source"`
+			URL            string `json:"url"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(seedData, &store); err != nil {
+		t.Fatalf("json.Unmarshal(seeds) returned error: %v", err)
+	}
+	if len(store.Records) != 1 {
+		t.Fatalf("expected 1 seed record, got %d", len(store.Records))
+	}
+	rec := store.Records[0]
+	if rec.ResponseStatus != http.StatusOK {
+		t.Fatalf("expected response_status 200, got %d", rec.ResponseStatus)
+	}
+	if rec.Source != "scan" {
+		t.Fatalf("expected source 'scan', got %q", rec.Source)
+	}
+	if rec.URL == "" {
+		t.Fatal("expected non-empty URL in seed record")
+	}
+
+	// Failed results must not be captured.
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failServer.Close()
+
+	cfgPathFail := filepath.Join(dir, "spekto-fail.yaml")
+	configDocFail := "targets:\n  - name: rest\n    protocol: rest\n    base_url: " + failServer.URL + "\nscan:\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPathFail, []byte(configDocFail), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config-fail) returned error: %v", err)
+	}
+	seedPathFail := filepath.Join(dir, "seeds-fail.json")
+	outPathFail := filepath.Join(dir, "bundle-fail.json")
+	if err := run([]string{"scan", "--config", cfgPathFail, "--inventory", invPath, "--seed-store", seedPathFail, "--out", outPathFail}); err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	failData, err := os.ReadFile(seedPathFail)
+	if err != nil {
+		t.Fatalf("os.ReadFile(seeds-fail) returned error: %v", err)
+	}
+	var failStore struct {
+		Records []struct{} `json:"records"`
+	}
+	if err := json.Unmarshal(failData, &failStore); err != nil {
+		t.Fatalf("json.Unmarshal(seeds-fail) returned error: %v", err)
+	}
+	if len(failStore.Records) != 0 {
+		t.Fatalf("expected 0 seed records for failed scan, got %d", len(failStore.Records))
+	}
+}
+
 func TestTriStateBoolSetParsesTrueAndFalse(t *testing.T) {
 	var value triStateBool
 	if err := value.Set("true"); err != nil {

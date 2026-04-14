@@ -28,23 +28,26 @@ type HTTPRequest struct {
 	Body            []byte
 	ContentType     string
 	AuthContextName string
+	SchemaGaps      []string
 }
 
 type HTTPResult struct {
-	RequestID       string
-	OperationID     string
-	AuthContextName string
-	Method          string
-	URL             string
-	StatusCode      int
-	Duration        time.Duration
-	StartedAt       time.Time
-	Truncated       bool
-	Error           string
+	RequestID          string
+	OperationID        string
+	AuthContextName    string
+	Method             string
+	URL                string
+	StatusCode         int
+	Duration           time.Duration
+	StartedAt          time.Time
+	Truncated          bool
+	Error              string
 
-	RequestHeaders  map[string]string
-	ResponseHeaders map[string]string
-	ResponseBody    []byte
+	RequestBody        []byte
+	RequestContentType string
+	RequestHeaders     map[string]string
+	ResponseHeaders    map[string]string
+	ResponseBody       []byte
 }
 
 type HTTPPolicy struct {
@@ -219,12 +222,14 @@ func (s *httpExecutorState) executeOneHTTP(ctx context.Context, baseClient *http
 
 func (s *httpExecutorState) doHTTPAttempt(ctx context.Context, client *http.Client, request HTTPRequest, requestID string, authContext auth.Context, hasAuthContext bool) (HTTPResult, bool) {
 	result := HTTPResult{
-		RequestID:       requestID,
-		OperationID:     request.OperationID,
-		AuthContextName: request.AuthContextName,
-		Method:          strings.ToUpper(strings.TrimSpace(request.Method)),
-		URL:             request.URL,
-		StartedAt:       time.Now().UTC(),
+		RequestID:          requestID,
+		OperationID:        request.OperationID,
+		AuthContextName:    request.AuthContextName,
+		Method:             strings.ToUpper(strings.TrimSpace(request.Method)),
+		URL:                request.URL,
+		StartedAt:          time.Now().UTC(),
+		RequestBody:        request.Body,
+		RequestContentType: request.ContentType,
 	}
 	if hasAuthContext {
 		result.URL = auth.RedactURL(result.URL, authContext)

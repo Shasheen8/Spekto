@@ -998,32 +998,47 @@ Build a safe, reusable execution layer for both CLI and GitHub Actions.
 
 ## Phase 3: Successful Coverage and Seed Generation
 
+### Status
+
+- [x] Phase 3 complete
+
 ### Goal
 
 Generate valid, authenticated requests before attempting deeper mutation rules.
 
 ### Tasks
 
-- Build candidate request generation
-  - use schemas
-  - use examples
-  - use enums and defaults
-  - use observed traffic payloads
-- Build seed persistence
-  - store successful requests by operation and auth context
-  - store provenance for each seed
-- Build resource hinting
-  - operator-provided constants
-  - path parameter hints
-  - ID and tenant hints
-- Build diagnostics
-  - explain why an endpoint never reached success
-  - explain whether auth, schema, state, or bad URLs blocked coverage
+- [x] Build candidate request generation
+  - [x] use examples (spec and observed traffic via HAR/Postman)
+  - [x] use enums and defaults
+  - [x] use observed traffic payloads
+  - [x] type/format fallbacks with schema gap tracking
+- [x] Build seed persistence
+  - [x] store successful requests by operation and auth context
+  - [x] store provenance for each seed (CapturedAt, Source, Target, AuthContextName)
+- [x] Build resource hinting
+  - [x] operator-provided constants (apply across all parameter locations)
+  - [x] path parameter hints
+  - [x] query parameter hints
+- [x] Build diagnostics
+  - [x] explain why an endpoint never reached success
+  - [x] classify by: auth_missing, budget_exceeded, streaming_unsupported, schema_gap, bad_status, network_error
+
+### Implementation Notes
+
+- `internal/seed/generator.go` — `GenerateRESTCandidate` resolves values by priority: resource hint > inventory example > default > enum[0] > type/format fallback
+- `internal/seed/store.go` — `Store` type with load/save/add/lookup; one record per (operation, auth context) pair
+- `internal/config/config.go` — `ResourceHints` struct (path_params, query_params, constants); `SeedStorePath` in OutputConfig
+- `internal/executor/bundle.go` — `CoverageReport` with per-result `CoverageEntry` and `ByReason` counts
+- `cmd/spekto/main.go` — `--seed-store` flag; `captureSeeds` captures successful results after scan
+- Optional query params are only included when a concrete value exists (avoids spurious 400s from type fallbacks)
+- Schema gaps propagate from `Candidate` → `HTTPRequest` → `Result` → `CoverageEntry`
+- `HTTPResult.RequestBody` and `HTTPResult.RequestContentType` capture the outgoing payload so evidence and seed records are complete
 
 ### Exit Criteria
 
-- successful seed capture for at least one representative target per protocol
-- coverage diagnostics that explain blocked endpoints clearly
+- [x] successful seed capture for at least one representative target per protocol
+- [x] coverage diagnostics that explain blocked endpoints clearly
 
 ## Phase 4: REST Vertical Slice
 

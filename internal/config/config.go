@@ -16,11 +16,21 @@ var supportedProtocols = []string{"rest", "graphql", "grpc"}
 var supportedDiscoveryModes = []string{"spec", "traffic", "manual", "active", "merge"}
 
 type Config struct {
-	Targets      []Target         `yaml:"targets"`
-	Inventory    InventorySources `yaml:"inventory"`
-	AuthContexts []AuthContext    `yaml:"auth_contexts"`
-	Scan         ScanPolicy       `yaml:"scan"`
-	Output       OutputConfig     `yaml:"output"`
+	Targets       []Target         `yaml:"targets"`
+	Inventory     InventorySources `yaml:"inventory"`
+	AuthContexts  []AuthContext    `yaml:"auth_contexts"`
+	Scan          ScanPolicy       `yaml:"scan"`
+	Output        OutputConfig     `yaml:"output"`
+	ResourceHints ResourceHints    `yaml:"resource_hints,omitempty"`
+}
+
+// ResourceHints holds operator-provided seed values used by the candidate generator.
+// PathParams and QueryParams are matched by exact parameter name.
+// Constants act as a fallback pool matched across all parameter locations.
+type ResourceHints struct {
+	PathParams  map[string]string `yaml:"path_params,omitempty"`
+	QueryParams map[string]string `yaml:"query_params,omitempty"`
+	Constants   map[string]string `yaml:"constants,omitempty"`
 }
 
 type Target struct {
@@ -80,10 +90,11 @@ type ScanPolicy struct {
 }
 
 type OutputConfig struct {
-	JSONPath     string `yaml:"json_path,omitempty"`
-	SARIFPath    string `yaml:"sarif_path,omitempty"`
-	EvidencePath string `yaml:"evidence_path,omitempty"`
-	CoveragePath string `yaml:"coverage_path,omitempty"`
+	JSONPath      string `yaml:"json_path,omitempty"`
+	SARIFPath     string `yaml:"sarif_path,omitempty"`
+	EvidencePath  string `yaml:"evidence_path,omitempty"`
+	CoveragePath  string `yaml:"coverage_path,omitempty"`
+	SeedStorePath string `yaml:"seed_store_path,omitempty"`
 }
 
 type MTLSConfig struct {
@@ -196,6 +207,9 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	}
 	if raw := strings.TrimSpace(getenv("SPEKTO_OUTPUT_COVERAGE")); raw != "" {
 		c.Output.CoveragePath = raw
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_OUTPUT_SEED_STORE")); raw != "" {
+		c.Output.SeedStorePath = raw
 	}
 
 	c.resolveAuthContextEnv(getenv)
