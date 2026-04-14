@@ -3,6 +3,9 @@
 #
 # Built binary (root level only)
 /spekto
+
+# Claude memory
+memory/
 *.exe
 *.exe~
 *.dll
