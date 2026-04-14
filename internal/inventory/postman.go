@@ -110,7 +110,8 @@ func postmanRequestOperation(req postmanRequest, itemName string, sourceRef Sour
 		return Operation{}, false, nil
 	}
 
-	op := NewRESTOperation(method, targetURL.Path)
+	normalizedPath, dynParams, dynExamples := NormalizeTrafficPath(targetURL.Path)
+	op := NewRESTOperation(method, normalizedPath)
 	op.SourceRefs = []SourceRef{sourceRef}
 	op.Provenance = Provenance{Observed: true}
 	op.Confidence = 0.8
@@ -122,10 +123,12 @@ func postmanRequestOperation(req postmanRequest, itemName string, sourceRef Sour
 	}
 	op.REST = &RESTDetails{
 		Method:           method,
-		NormalizedPath:   normalizePath(targetURL.Path),
+		NormalizedPath:   normalizedPath,
 		OriginalPath:     targetURL.Path,
+		PathParams:       dynParams,
 		ServerCandidates: uniqueStrings([]string{originURL(targetURL)}),
 	}
+	op.Examples.Parameters = append(op.Examples.Parameters, dynExamples...)
 
 	for _, header := range req.Header {
 		if strings.TrimSpace(header.Key) == "" {

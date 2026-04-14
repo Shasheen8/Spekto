@@ -286,16 +286,25 @@ func runDiscoverMerge(args []string) error {
 		return fmt.Errorf("discover merge requires at least one inventory input")
 	}
 
-	var operationSets [][]inventory.Operation
+	inventories := make([]inventory.Inventory, 0, len(inventoryPaths))
 	for _, path := range inventoryPaths {
 		inv, err := inventory.LoadInventoryFile(path)
 		if err != nil {
 			return fmt.Errorf("inventory %s: %w", path, err)
 		}
-		operationSets = append(operationSets, inv.Operations)
+		inventories = append(inventories, inv)
 	}
 
-	return writeMergedInventory(outPath, operationSets...)
+	merged := inventory.MergeInventories(inventories...)
+	data, err := merged.JSON()
+	if err != nil {
+		return err
+	}
+	if outPath == "" {
+		_, err = os.Stdout.Write(append(data, '\n'))
+		return err
+	}
+	return os.WriteFile(outPath, append(data, '\n'), 0o600)
 }
 
 func writeMergedInventory(outPath string, operationSets ...[]inventory.Operation) error {

@@ -84,7 +84,47 @@ func TestParsePostmanNestedItems(t *testing.T) {
 	if len(doc.Operations) != 1 {
 		t.Fatalf("expected 1 operation, got %d", len(doc.Operations))
 	}
-	if doc.Operations[0].DisplayName != "Get model" {
-		t.Fatalf("unexpected display name: %s", doc.Operations[0].DisplayName)
+	op := doc.Operations[0]
+	if op.DisplayName != "Get model" {
+		t.Fatalf("unexpected display name: %s", op.DisplayName)
+	}
+	// Numeric segment must be normalized.
+	if op.REST == nil || op.REST.NormalizedPath != "/v1/models/{id}" {
+		t.Fatalf("expected normalized path /v1/models/{id}, got %#v", op.REST)
+	}
+	if len(op.Examples.Parameters) == 0 || op.Examples.Parameters[0].Example != "1" {
+		t.Fatalf("expected original value '1' as path param example, got %v", op.Examples.Parameters)
+	}
+}
+
+func TestParsePostmanCollapsesDifferentIDsToOneOperation(t *testing.T) {
+	data := []byte(`{
+	  "item": [
+	    {
+	      "name": "Get user A",
+	      "request": {
+	        "method": "GET",
+	        "url": {"raw":"https://api.example.com/v1/users/100"}
+	      }
+	    },
+	    {
+	      "name": "Get user B",
+	      "request": {
+	        "method": "GET",
+	        "url": {"raw":"https://api.example.com/v1/users/200"}
+	      }
+	    }
+	  ]
+	}`)
+
+	doc, err := ParsePostman(data, "collection.json")
+	if err != nil {
+		t.Fatalf("ParsePostman returned error: %v", err)
+	}
+	if len(doc.Operations) != 1 {
+		t.Fatalf("expected 1 operation after cross-ID normalization, got %d", len(doc.Operations))
+	}
+	if doc.Operations[0].REST == nil || doc.Operations[0].REST.NormalizedPath != "/v1/users/{id}" {
+		t.Fatalf("expected normalized path, got %#v", doc.Operations[0].REST)
 	}
 }

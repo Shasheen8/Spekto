@@ -109,7 +109,8 @@ func harEntryOperation(entry harEntry, sourceRef SourceRef) (Operation, bool, er
 	if err != nil {
 		return Operation{}, false, fmt.Errorf("invalid HAR request URL %q: %w", entry.Request.URL, err)
 	}
-	op := NewRESTOperation(method, parsedURL.Path)
+	normalizedPath, dynParams, dynExamples := NormalizeTrafficPath(parsedURL.Path)
+	op := NewRESTOperation(method, normalizedPath)
 	op.SourceRefs = []SourceRef{sourceRef}
 	op.Provenance = Provenance{Observed: true}
 	op.Confidence = 0.8
@@ -118,10 +119,12 @@ func harEntryOperation(entry harEntry, sourceRef SourceRef) (Operation, bool, er
 	op.DisplayName = op.Locator
 	op.REST = &RESTDetails{
 		Method:           method,
-		NormalizedPath:   normalizePath(parsedURL.Path),
+		NormalizedPath:   normalizedPath,
 		OriginalPath:     parsedURL.Path,
+		PathParams:       dynParams,
 		ServerCandidates: uniqueStrings([]string{originURL(parsedURL)}),
 	}
+	op.Examples.Parameters = append(op.Examples.Parameters, dynExamples...)
 
 	for _, header := range entry.Request.Headers {
 		meta := ParameterMeta{Name: header.Name, In: "header"}

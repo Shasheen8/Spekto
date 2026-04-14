@@ -464,6 +464,16 @@ func uniqueExampleValues(values []ExampleValue) []ExampleValue {
 	return out
 }
 
+// MergeInventories merges multiple Inventory values into one.
+// Prefer this over Merge when working with full loaded inventories.
+func MergeInventories(inventories ...Inventory) Inventory {
+	opSets := make([][]Operation, 0, len(inventories))
+	for _, inv := range inventories {
+		opSets = append(opSets, inv.Operations)
+	}
+	return Merge(opSets...)
+}
+
 func uniqueParameterValues(values []ParameterValue) []ParameterValue {
 	if len(values) == 0 {
 		return nil

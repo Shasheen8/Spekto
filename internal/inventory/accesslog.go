@@ -128,7 +128,8 @@ func accessLogOperation(record accessLogRecord, sourceRef SourceRef) (Operation,
 		return Operation{}, false, nil
 	}
 
-	op := NewRESTOperation(method, targetURL.Path)
+	normalizedPath, dynParams, dynExamples := NormalizeTrafficPath(targetURL.Path)
+	op := NewRESTOperation(method, normalizedPath)
 	op.SourceRefs = []SourceRef{sourceRef}
 	op.Provenance = Provenance{Observed: true}
 	op.Confidence = 0.7
@@ -137,10 +138,12 @@ func accessLogOperation(record accessLogRecord, sourceRef SourceRef) (Operation,
 	op.DisplayName = op.Locator
 	op.REST = &RESTDetails{
 		Method:           method,
-		NormalizedPath:   normalizePath(targetURL.Path),
+		NormalizedPath:   normalizedPath,
 		OriginalPath:     targetURL.Path,
+		PathParams:       dynParams,
 		ServerCandidates: uniqueStrings([]string{originURL(targetURL)}),
 	}
+	op.Examples.Parameters = append(op.Examples.Parameters, dynExamples...)
 	if record.Status != 0 {
 		op.REST.ResponseMap = append(op.REST.ResponseMap, ResponseMeta{
 			StatusCode: fmt.Sprintf("%d", record.Status),

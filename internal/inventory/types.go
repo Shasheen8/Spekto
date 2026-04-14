@@ -4,8 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
+)
+
+var (
+	reUUID    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	reNumeric = regexp.MustCompile(`^[0-9]+$`)
 )
 
 type Protocol string
@@ -248,6 +254,51 @@ func normalizePath(path string) string {
 		path = strings.ReplaceAll(path, "//", "/")
 	}
 	return path
+}
+
+// NormalizeTrafficPath replaces dynamic path segments (UUIDs, integers) with
+// named placeholders and returns the normalized path together with the extracted
+// parameter examples. Applied to traffic-derived operations (HAR, Postman,
+// access logs) so that /v1/users/42 and /v1/users/87 collapse to one operation:
+// /v1/users/{id} with example value "42".
+//
+// Spec-derived paths are left untouched — their param names come from the spec.
+func NormalizeTrafficPath(path string) (normalized string, params []ParameterMeta, examples []ParameterValue) {
+	path = normalizePath(path)
+	segments := strings.Split(path, "/")
+	out := make([]string, 0, len(segments))
+	seen := map[string]int{} // placeholder name → count for dedup
+
+	for _, seg := range segments {
+		if seg == "" {
+			out = append(out, seg)
+			continue
+		}
+		if reUUID.MatchString(seg) || reNumeric.MatchString(seg) {
+			name := dynamicParamName(seg, seen)
+			out = append(out, "{"+name+"}")
+			params = append(params, ParameterMeta{Name: name, In: "path", Type: paramType(seg)})
+			examples = append(examples, ParameterValue{Name: name, In: "path", Example: seg})
+		} else {
+			out = append(out, seg)
+		}
+	}
+	return strings.Join(out, "/"), params, examples
+}
+
+func dynamicParamName(_ string, seen map[string]int) string {
+	seen["id"]++
+	if seen["id"] == 1 {
+		return "id"
+	}
+	return fmt.Sprintf("id%d", seen["id"])
+}
+
+func paramType(seg string) string {
+	if reNumeric.MatchString(seg) {
+		return "integer"
+	}
+	return "string"
 }
 
 func SortStringsStable(values []string) []string {

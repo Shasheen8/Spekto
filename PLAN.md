@@ -479,6 +479,8 @@ Phase 1 should begin with these assumptions fixed:
 
 ### Status
 
+- [x] Phase 1 complete
+
 - [x] Task 1.1: Canonical operation model
 - [x] Task 1.2: REST ingestion contract and initial implementation
 - [x] Task 1.3: GraphQL ingestion initial implementation
@@ -486,7 +488,7 @@ Phase 1 should begin with these assumptions fixed:
 - [x] Task 1.5: Supplemental sources initial implementation
 - [x] Task 1.6: `discover spec` initial command
 - [x] Task 1.7: Merge and dedupe initial implementation
-- [ ] Task 1.8: External runtime discovery provider bridge
+- [x] Task 1.8: Traffic-derived path normalization
 
 ### Goal
 
@@ -934,14 +936,30 @@ Task 1.2 is complete when REST ingestion can produce canonical operation records
 - [x] mark `specified but unseen`
 - [x] mark `observed but undocumented`
 
-### Task 1.8: External Runtime Discovery Provider Bridge
+### Task 1.8: Traffic-Derived Path Normalization
 
-- [ ] define the provider artifact contract
-- [ ] support `Vespasian`-generated `OpenAPI` as a first-class supplemental discovery input
-- [ ] support `Vespasian`-generated `GraphQL SDL` as a first-class supplemental discovery input
-- [ ] retain provider `capture.json` as a sidecar artifact linked to each discovery run
-- [ ] preserve provider provenance through Spekto inventory merge and later coverage reporting
-- [ ] defer direct provider-capture ingestion until the artifact bridge is validated on real targets
+- [x] normalize dynamic path segments in traffic sources (UUIDs, integers → `{id}`)
+- [x] collapse multiple traffic observations of the same operation into one canonical record
+- [x] preserve original path as `OriginalPath` and extracted values as path param examples
+- [x] apply normalization consistently across HAR, Postman, and access log parsers
+
+#### Approach
+
+Borrowed the core insight from Vespasian's discovery philosophy — not a file import bridge,
+but the underlying principle: traffic observations of different specific IDs should collapse
+to one operation with a parameterized path, not N separate operations.
+
+`/v1/users/42` and `/v1/users/87` both normalize to `/v1/users/{id}` with `42` stored
+as a path parameter example. This improves operation deduplication, seed generation quality,
+and coverage accounting across all traffic sources.
+
+#### Implementation
+
+- `NormalizeTrafficPath` in `internal/inventory/types.go` — detects UUID and integer path
+  segments, replaces with `{id}` / `{id2}` placeholders, returns extracted `ParameterMeta`
+  and `ParameterValue` examples
+- Applied in `har.go`, `postman.go`, `accesslog.go` — spec-derived paths are untouched
+- `MergeInventories` in `merge.go` — convenience wrapper for full inventory merges
 
 ### Exit Criteria
 
