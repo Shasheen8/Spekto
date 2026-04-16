@@ -95,6 +95,7 @@ type OutputConfig struct {
 	EvidencePath  string `yaml:"evidence_path,omitempty"`
 	CoveragePath  string `yaml:"coverage_path,omitempty"`
 	SeedStorePath string `yaml:"seed_store_path,omitempty"`
+	FindingsPath  string `yaml:"findings_path,omitempty"`
 }
 
 type MTLSConfig struct {
@@ -210,6 +211,9 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	}
 	if raw := strings.TrimSpace(getenv("SPEKTO_OUTPUT_SEED_STORE")); raw != "" {
 		c.Output.SeedStorePath = raw
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_OUTPUT_FINDINGS")); raw != "" {
+		c.Output.FindingsPath = raw
 	}
 
 	c.resolveAuthContextEnv(getenv)

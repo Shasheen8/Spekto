@@ -18,6 +18,10 @@ type ScanOptions struct {
 	ExcludeTargets []string
 	AuthContexts   []string
 	ResourceHints  config.ResourceHints
+	// Registry is a pre-resolved auth registry. When non-nil it is used directly,
+	// skipping internal registry construction and login-flow resolution so callers
+	// that also need the registry (e.g. for rule scanning) only pay that cost once.
+	Registry *auth.Registry
 }
 
 func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, options ScanOptions) (Bundle, error) {
@@ -30,19 +34,25 @@ func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, optio
 		return Bundle{}, errors.New("scan requires at least one selected target")
 	}
 
-	registry, err := auth.NewRegistry(cfg)
-	if err != nil {
-		return Bundle{}, err
-	}
-	loginClient := &http.Client{
-		Timeout: cfg.Scan.Timeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	registry, err = registry.ResolveLoginFlows(ctx, loginClient)
-	if err != nil {
-		return Bundle{}, err
+	var registry auth.Registry
+	if options.Registry != nil {
+		registry = *options.Registry
+	} else {
+		var err2 error
+		registry, err2 = auth.NewRegistry(cfg)
+		if err2 != nil {
+			return Bundle{}, err2
+		}
+		loginClient := &http.Client{
+			Timeout: cfg.Scan.Timeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		registry, err2 = registry.ResolveLoginFlows(ctx, loginClient)
+		if err2 != nil {
+			return Bundle{}, err2
+		}
 	}
 
 	policy := NewHTTPPolicy(cfg.Scan)

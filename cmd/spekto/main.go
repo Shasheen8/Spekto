@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
+
+	"github.com/Shasheen8/Spekto/internal/auth"
 	"github.com/Shasheen8/Spekto/internal/config"
 	activediscovery "github.com/Shasheen8/Spekto/internal/discovery/active"
 	"github.com/Shasheen8/Spekto/internal/executor"
@@ -17,6 +20,7 @@ import (
 	graphqldiscovery "github.com/Shasheen8/Spekto/internal/protocol/graphql"
 	grpcdiscovery "github.com/Shasheen8/Spekto/internal/protocol/grpc"
 	restdiscovery "github.com/Shasheen8/Spekto/internal/protocol/rest"
+	"github.com/Shasheen8/Spekto/internal/rules"
 	"github.com/Shasheen8/Spekto/internal/seed"
 )
 
@@ -365,7 +369,9 @@ func runScan(args []string) error {
 	var configPath string
 	var inventoryPath string
 	var outPath string
+	var findingsPath string
 	var seedStorePath string
+	var noRules bool
 	var includeTargets multiValue
 	var excludeTargets multiValue
 	var authContexts multiValue
@@ -377,7 +383,9 @@ func runScan(args []string) error {
 	fs.StringVar(&configPath, "config", "", "Config file path")
 	fs.StringVar(&inventoryPath, "inventory", "", "Canonical inventory JSON file path")
 	fs.StringVar(&outPath, "out", "", "Output path for evidence bundle JSON")
+	fs.StringVar(&findingsPath, "findings-out", "", "Output path for findings JSON (default: prints to stdout when findings exist)")
 	fs.StringVar(&seedStorePath, "seed-store", "", "Path to seed store JSON file (captures successful requests)")
+	fs.BoolVar(&noRules, "no-rules", false, "Skip rule-based scanning after seeding")
 	fs.Var(&includeTargets, "target", "Target name to include")
 	fs.Var(&excludeTargets, "exclude-target", "Target name to exclude")
 	fs.Var(&authContexts, "auth-context", "Auth context name to include")
@@ -410,11 +418,29 @@ func runScan(args []string) error {
 		return err
 	}
 
+	// Build and resolve the auth registry once so both the seed scan and rule
+	// scan share the same login-flow results without executing them twice.
+	registry, err := auth.NewRegistry(cfg)
+	if err != nil {
+		return err
+	}
+	loginClient := &http.Client{
+		Timeout: cfg.Scan.Timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	registry, err = registry.ResolveLoginFlows(context.Background(), loginClient)
+	if err != nil {
+		return err
+	}
+
 	bundle, err := executor.Scan(context.Background(), cfg, inv, executor.ScanOptions{
 		IncludeTargets: includeTargets,
 		ExcludeTargets: excludeTargets,
 		AuthContexts:   authContexts,
 		ResourceHints:  cfg.ResourceHints,
+		Registry:       &registry,
 	})
 	if err != nil {
 		return err
@@ -431,11 +457,11 @@ func runScan(args []string) error {
 		}
 	}
 
+	// Write evidence bundle.
 	data, err := bundle.JSON()
 	if err != nil {
 		return err
 	}
-
 	outputPath := strings.TrimSpace(outPath)
 	if outputPath == "" {
 		switch {
@@ -445,11 +471,61 @@ func runScan(args []string) error {
 			outputPath = cfg.Output.JSONPath
 		}
 	}
-	if outputPath == "" {
-		_, err = os.Stdout.Write(append(data, '\n'))
+	bundleToStdout := outputPath == ""
+	if bundleToStdout {
+		if _, err = os.Stdout.Write(append(data, '\n')); err != nil {
+			return err
+		}
+	} else {
+		if err = os.WriteFile(outputPath, append(data, '\n'), 0o600); err != nil {
+			return err
+		}
+	}
+
+	// Rule-based scanning (skipped when --no-rules is set).
+	if noRules {
+		return nil
+	}
+	policy := executor.NewHTTPPolicy(cfg.Scan)
+	findings, err := rules.Scan(context.Background(), bundle.Results, registry, rules.DefaultRules(), policy, rules.ScanOptions{})
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(outputPath, append(data, '\n'), 0o600)
+	if len(findings) == 0 {
+		return nil
+	}
+
+	fs2 := rules.FindingSet{
+		Findings: findings,
+		Summary:  rules.Summarize(findings),
+	}
+	findingsData, err := json.MarshalIndent(fs2, "", "  ")
+	if err != nil {
+		return err
+	}
+	findingsData = append(findingsData, '\n')
+
+	fPath := strings.TrimSpace(findingsPath)
+	if fPath == "" {
+		fPath = strings.TrimSpace(cfg.Output.FindingsPath)
+	}
+	if fPath != "" {
+		return os.WriteFile(fPath, findingsData, 0o600)
+	}
+	// When the bundle went to stdout, print a summary to stderr rather than
+	// corrupting stdout with a second JSON document. The operator should use
+	// --findings-out to persist findings.
+	if bundleToStdout {
+		summary := rules.Summarize(findings)
+		fmt.Fprintf(os.Stderr, "findings: %d total", summary.Total)
+		for sev, count := range summary.BySeverity {
+			fmt.Fprintf(os.Stderr, " | %s: %d", sev, count)
+		}
+		fmt.Fprintln(os.Stderr, " (use --findings-out to save)")
+		return nil
+	}
+	_, err = os.Stdout.Write(findingsData)
+	return err
 }
 
 func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, timeout time.Duration, followRedirects triStateBool) {

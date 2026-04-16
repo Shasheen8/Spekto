@@ -1060,38 +1060,54 @@ Generate valid, authenticated requests before attempting deeper mutation rules.
 
 ## Phase 4: REST Vertical Slice
 
+### Status
+
+- [x] Phase 4.1: Rule engine and orchestration
+- [x] Phase 4.2: First REST rule set
+- [ ] Phase 4.3: Mutation strategies (query, path, header, body)
+
 ### Goal
 
 Deliver the first useful production-ready scanner slice on REST.
 
 ### Tasks
 
-- Build REST orchestration
-  - inventory -> auth -> seed -> mutate -> report
-- Implement first REST rules
-  - authentication bypass
-  - invalid auth accepted
-  - JWT `alg=none`
-  - JWT blank secret
-  - JWT weak secret
-  - JWT null signature
-  - JWT signature not verified
-  - JWT KID injection
-  - security header checks
-  - CORS absent or permissive
-  - TRACE or TRACK enabled
-  - method override enabled
-- Build mutation strategies
-  - query parameter mutation
-  - path parameter mutation
-  - header mutation
-  - JSON body mutation
+- [x] Build REST orchestration
+  - [x] Rule interface, Finding, Probe, FindingSet types (`internal/rules/types.go`)
+  - [x] `rules.Scan()` orchestration — seeds → probes → findings (`internal/rules/scan.go`)
+  - [x] Pre-resolved auth registry threaded from main.go to avoid double login-flow execution
+  - [x] `--findings-out` and `--no-rules` flags on `spekto scan`
+  - [x] `findings_path` in OutputConfig with `SPEKTO_OUTPUT_FINDINGS` env override
+- [x] Implement first REST rules
+  - [x] AUTH001: authentication bypass — strip auth, check if 2xx
+  - [x] AUTH002: invalid auth accepted — garbage bearer token, check if 2xx
+  - [x] JWT001: `alg=none` — empty signature, algorithm confusion
+  - [x] JWT002: null signature — empty signature segment, original header/payload
+  - [x] JWT003: blank secret — HMAC-SHA256 with empty key
+  - [x] JWT004: weak secret — HMAC-SHA256 with 13 common secrets
+  - [x] JWT005: KID injection — path traversal and SQL payloads in kid header
+  - [x] HDR001: security headers — HSTS (HTTPS only), CSP, X-Frame-Options
+  - [x] HDR002: CORS misconfiguration — reflected origin, wildcard, credentials escalation
+  - [x] HDR003: TRACE enabled — TRACE method probe, message/http content-type check
+  - [x] HDR004: method override — X-HTTP-Method-Override/X-Method-Override/X-HTTP-Method
+- [ ] Build mutation strategies (query parameter, path parameter, header, JSON body)
+
+### Implementation Notes
+
+- `internal/rules/` — Rule interface, auth.go, jwt.go, headers.go, registry.go, scan.go
+- `executor.ScanOptions.Registry` — pre-resolved auth registry; when set, executor skips internal construction
+- Import cycle avoided: Bundle carries no `[]Finding`; findings are a separate output file
+- Rules run only against REST seeds (`seed.Protocol == "rest"`)
+- Probes per seed capped at 50 by default
+- JWT rules skip non-JWT tokens (opaque API keys, etc.)
+- SecurityHeaders checks HSTS only for HTTPS endpoints
+- CORS probe sends a dedicated evil.spekto.example.com origin and only flags reflected origins
 
 ### Exit Criteria
 
-- one stable REST scan flow
-- replayable findings for the first rule set
-- targeted CLI runs for a single endpoint, tag, or service
+- [x] one stable REST scan flow
+- [x] replayable findings for the first rule set
+- [ ] targeted CLI runs for a single endpoint, tag, or service (phase 4.3)
 
 ## Phase 5: GraphQL Coverage
 
