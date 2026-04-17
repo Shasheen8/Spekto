@@ -48,12 +48,18 @@ func hs256Sign(signingInput, secret string) string {
 }
 
 // buildJWTProbe constructs a Probe that sends a tampered JWT and raises a finding
-// if the server accepts it (2xx/3xx response).
-func buildJWTProbe(ruleID string, seed executor.Result, tampered string,
+// if the server accepts it (2xx/3xx response). variant is appended to the probe
+// ID so that multi-probe rules (e.g. one probe per weak secret) each get a
+// distinct correlation ID. Pass an empty string for single-probe rules.
+func buildJWTProbe(ruleID, variant string, seed executor.Result, tampered string,
 	severity Severity, title, description, owasp string, cwe int, remediation string,
 ) Probe {
+	id := ruleID
+	if variant != "" {
+		id = ruleID + "-" + variant
+	}
 	req := seedBaseRequest(seed)
-	req.ID = probeID(seed, ruleID)
+	req.ID = probeID(seed, id)
 	req.Headers = cloneNonRedactedHeaders(seed.Evidence.Request.Headers)
 	req.Headers["Authorization"] = "Bearer " + tampered
 	// No AuthContextName → executor will not overwrite our tampered header.
@@ -100,7 +106,7 @@ func (r *JWTAlgNone) Check(seed executor.Result, authCtx auth.Context) ([]Probe,
 	tampered := newHdr + "." + payload + "."
 
 	return []Probe{buildJWTProbe(
-		r.ID(), seed, tampered,
+		r.ID(), "", seed, tampered,
 		SeverityCritical,
 		"JWT algorithm confusion: alg=none accepted",
 		"The server accepted a JWT with alg=none, meaning it performs no signature verification.",
@@ -123,7 +129,7 @@ func (r *JWTNullSignature) Check(seed executor.Result, authCtx auth.Context) ([]
 	tampered := hdr + "." + payload + "."
 
 	return []Probe{buildJWTProbe(
-		r.ID(), seed, tampered,
+		r.ID(), "", seed, tampered,
 		SeverityCritical,
 		"JWT null signature accepted",
 		"The server accepted a JWT with an empty signature segment, indicating signature validation may not be enforced.",
@@ -155,7 +161,7 @@ func (r *JWTBlankSecret) Check(seed executor.Result, authCtx auth.Context) ([]Pr
 	tampered := sigInput + "." + hs256Sign(sigInput, "")
 
 	return []Probe{buildJWTProbe(
-		r.ID(), seed, tampered,
+		r.ID(), "", seed, tampered,
 		SeverityHigh,
 		"JWT signed with blank secret accepted",
 		"The server accepted a JWT signed with an empty HMAC-SHA256 secret.",
@@ -195,12 +201,11 @@ func (r *JWTWeakSecret) Check(seed executor.Result, authCtx auth.Context) ([]Pro
 	probes := make([]Probe, 0, len(commonJWTSecrets))
 	for _, secret := range commonJWTSecrets {
 		tampered := sigInput + "." + hs256Sign(sigInput, secret)
-		capturedSecret := secret
 		probes = append(probes, buildJWTProbe(
-			r.ID(), seed, tampered,
+			r.ID(), secret, seed, tampered,
 			SeverityHigh,
-			"JWT signed with weak secret accepted: "+capturedSecret,
-			"The server accepted a JWT signed with the common weak secret '"+capturedSecret+"'.",
+			"JWT signed with weak secret accepted: "+secret,
+			"The server accepted a JWT signed with the common weak secret '"+secret+"'.",
 			"API2:2023 Broken Authentication", 347,
 			"Replace the JWT signing secret with a cryptographically strong random value (minimum 256 bits). Store it outside the codebase.",
 		))
@@ -228,7 +233,7 @@ func (r *JWTSignatureNotVerified) Check(seed executor.Result, authCtx auth.Conte
 	tampered := hdr + "." + payload + "." + corrupted
 
 	return []Probe{buildJWTProbe(
-		r.ID(), seed, tampered,
+		r.ID(), "", seed, tampered,
 		SeverityCritical,
 		"JWT signature not verified",
 		"The server accepted a JWT with a deliberately corrupted signature, indicating that cryptographic signature validation is not enforced.",
@@ -287,12 +292,11 @@ func (r *JWTKIDInjection) Check(seed executor.Result, authCtx auth.Context) ([]P
 		}
 		// Keep original payload and signature — we're only mutating the header.
 		tampered := newHdr + "." + payload + "." + sig
-		capturedKid := kid
 		probes = append(probes, buildJWTProbe(
-			r.ID(), seed, tampered,
+			r.ID(), kid, seed, tampered,
 			SeverityHigh,
 			"JWT KID injection",
-			"The server accepted a JWT with an injected 'kid' value of '"+capturedKid+"', which may indicate the key ID is not validated before being used in a key lookup.",
+			"The server accepted a JWT with an injected 'kid' value of '"+kid+"', which may indicate the key ID is not validated before being used in a key lookup.",
 			"API2:2023 Broken Authentication", 347,
 			"Validate and allowlist JWT kid values. Never interpolate kid directly into filesystem paths or SQL queries.",
 		))

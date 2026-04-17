@@ -1094,7 +1094,7 @@ Deliver the first useful production-ready scanner slice on REST.
 - [x] Build mutation strategies
   - [x] HDR005: IP source bypass — X-Forwarded-For/X-Real-IP/X-Client-IP without auth
   - [x] PARAM001: privilege escalation params — admin=true/role=admin/debug=true without auth
-  - [x] BODY001: mass assignment — inject role/is_admin/permissions into JSON body, flag reflection
+  - [x] BODY001: mass assignment — inject role/is_admin/admin/superuser into JSON body; compares probe response against seed baseline to avoid pre-existing field false positives
   - path parameter mutation — deferred to Phase 7 (BOLA/IDOR)
 - [x] Targeted operation scoping
   - [x] `--operation` flag — match by operation ID or locator substring
@@ -1107,10 +1107,13 @@ Deliver the first useful production-ready scanner slice on REST.
 - `executor.ScanOptions.Registry` — pre-resolved auth registry; when set, executor skips internal construction
 - Import cycle avoided: Bundle carries no `[]Finding`; findings are a separate output file
 - Rules run only against REST seeds (`seed.Protocol == "rest"`)
-- Probes per seed capped at 50 by default
+- Probes per seed capped at 50 by default (~39 probes with JWT auth, ~20 without)
 - JWT rules skip non-JWT tokens (opaque API keys, etc.)
+- `buildJWTProbe` takes a `variant` string so multi-probe rules (JWT004 weak secrets, JWT005 KID payloads) each get a unique correlation ID
+- BODY001 uses an ordered field list for deterministic findings; seed response is parsed as baseline — only flags fields that are new or changed to the injected value
 - SecurityHeaders checks HSTS only for HTTPS endpoints
 - CORS probe sends a dedicated evil.spekto.example.com origin and only flags reflected origins
+- `--operation` and `--tag` filtering cascades naturally to rule scan (rules only see seeds from filtered operations)
 
 ### Exit Criteria
 
