@@ -375,6 +375,8 @@ func runScan(args []string) error {
 	var includeTargets multiValue
 	var excludeTargets multiValue
 	var authContexts multiValue
+	var includeOperations multiValue
+	var includeTags multiValue
 	var concurrency int
 	var requestBudget int
 	var timeout time.Duration
@@ -389,6 +391,8 @@ func runScan(args []string) error {
 	fs.Var(&includeTargets, "target", "Target name to include")
 	fs.Var(&excludeTargets, "exclude-target", "Target name to exclude")
 	fs.Var(&authContexts, "auth-context", "Auth context name to include")
+	fs.Var(&includeOperations, "operation", "Operation ID or locator substring to include (can specify multiple)")
+	fs.Var(&includeTags, "tag", "Tag to include — OR logic across multiple values (can specify multiple)")
 	fs.IntVar(&concurrency, "concurrency", 0, "Override scan concurrency")
 	fs.IntVar(&requestBudget, "request-budget", 0, "Override scan request budget")
 	fs.DurationVar(&timeout, "timeout", 0, "Override scan timeout")
@@ -436,11 +440,13 @@ func runScan(args []string) error {
 	}
 
 	bundle, err := executor.Scan(context.Background(), cfg, inv, executor.ScanOptions{
-		IncludeTargets: includeTargets,
-		ExcludeTargets: excludeTargets,
-		AuthContexts:   authContexts,
-		ResourceHints:  cfg.ResourceHints,
-		Registry:       &registry,
+		IncludeTargets:    includeTargets,
+		ExcludeTargets:    excludeTargets,
+		AuthContexts:      authContexts,
+		ResourceHints:     cfg.ResourceHints,
+		Registry:          &registry,
+		IncludeOperations: includeOperations,
+		IncludeTags:       includeTags,
 	})
 	if err != nil {
 		return err

@@ -22,6 +22,12 @@ type ScanOptions struct {
 	// skipping internal registry construction and login-flow resolution so callers
 	// that also need the registry (e.g. for rule scanning) only pay that cost once.
 	Registry *auth.Registry
+	// IncludeOperations scopes the scan to operations whose ID or locator matches
+	// any of the given strings (substring match on locator). Empty = all operations.
+	IncludeOperations []string
+	// IncludeTags scopes the scan to operations carrying at least one of the given
+	// tags (case-insensitive OR logic). Empty = all operations.
+	IncludeTags []string
 }
 
 func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, options ScanOptions) (Bundle, error) {
@@ -59,7 +65,7 @@ func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, optio
 	bundle := Bundle{StartedAt: startedAt}
 
 	for _, target := range targets {
-		operations := selectTargetOperations(inv.Operations, target)
+		operations := selectTargetOperations(inv.Operations, target, options.IncludeOperations, options.IncludeTags)
 		switch target.Protocol {
 		case "rest":
 			results, err := scanRESTTarget(ctx, target, operations, registry, policy, options.AuthContexts, options.ResourceHints)
@@ -208,7 +214,7 @@ func convertHTTPResults(target config.Target, operations map[string]inventory.Op
 	return results
 }
 
-func selectTargetOperations(operations []inventory.Operation, target config.Target) []inventory.Operation {
+func selectTargetOperations(operations []inventory.Operation, target config.Target, includeOps, includeTags []string) []inventory.Operation {
 	selected := make([]inventory.Operation, 0, len(operations))
 	for _, operation := range operations {
 		if string(operation.Protocol) != target.Protocol {
@@ -217,9 +223,39 @@ func selectTargetOperations(operations []inventory.Operation, target config.Targ
 		if len(operation.Targets) > 0 && !containsString(operation.Targets, target.Name) {
 			continue
 		}
+		if len(includeOps) > 0 && !operationMatchesAny(operation, includeOps) {
+			continue
+		}
+		if len(includeTags) > 0 && !operationHasAnyTag(operation, includeTags) {
+			continue
+		}
 		selected = append(selected, operation)
 	}
 	return selected
+}
+
+// operationMatchesAny returns true when the operation ID equals any pattern,
+// or the locator contains any pattern as a substring.
+func operationMatchesAny(op inventory.Operation, patterns []string) bool {
+	for _, p := range patterns {
+		if op.ID == p || strings.Contains(op.Locator, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// operationHasAnyTag returns true when the operation carries at least one of
+// the given tags (case-insensitive).
+func operationHasAnyTag(op inventory.Operation, tags []string) bool {
+	for _, want := range tags {
+		for _, have := range op.Tags {
+			if strings.EqualFold(have, want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolveAuthAssignments(operation inventory.Operation, target config.Target, registry auth.Registry, selectedAuthContexts []string) ([]string, *Result, error) {

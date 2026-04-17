@@ -12,11 +12,16 @@ func DefaultRules() []Rule {
 		&JWTNullSignature{},
 		&JWTBlankSecret{},
 		&JWTWeakSecret{},
+		&JWTSignatureNotVerified{},
 		&JWTKIDInjection{},
 		// HTTP misconfiguration
 		&SecurityHeaders{},
 		&CORSMisconfiguration{},
 		&TRACEEnabled{},
 		&MethodOverride{},
+		&IPSourceBypass{},
+		// Parameter and body mutations
+		&PrivilegeEscalationParams{},
+		&MassAssignment{},
 	}
 }

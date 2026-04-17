@@ -124,36 +124,42 @@ type TRACEEnabled struct{}
 func (r *TRACEEnabled) ID() string { return "HDR003" }
 
 func (r *TRACEEnabled) Check(seed executor.Result, _ auth.Context) ([]Probe, []Finding) {
-	req := seedBaseRequest(seed)
-	req.ID = probeID(seed, r.ID())
-	req.Method = http.MethodTrace
-	req.Body = nil
-	req.ContentType = ""
-	// No auth — exposure is significant regardless of auth state.
+	// Probe both TRACE and TRACK — both echo request headers and are exploitable
+	// in cross-site tracing (XST) attacks. No auth sent; exposure is significant
+	// regardless of authentication state.
+	probes := make([]Probe, 0, 2)
+	for _, method := range []string{http.MethodTrace, "TRACK"} {
+		capturedMethod := method
+		req := seedBaseRequest(seed)
+		req.ID = probeID(seed, r.ID()+"-"+method)
+		req.Method = capturedMethod
+		req.Body = nil
+		req.ContentType = ""
 
-	return []Probe{{
-		RuleID:  r.ID(),
-		Request: req,
-		Evaluate: func(result executor.HTTPResult) []Finding {
-			if result.StatusCode != http.StatusOK {
-				return nil
-			}
-			ct := strings.ToLower(result.ResponseHeaders["Content-Type"])
-			// A genuine TRACE response echoes request headers with message/http content type.
-			if !strings.Contains(ct, "message") && !strings.Contains(ct, "http") {
-				return nil
-			}
-			return []Finding{newFinding(
-				r.ID(), SeverityLow, ConfidenceMedium,
-				"HTTP TRACE method enabled",
-				"The server responded to an HTTP TRACE request. TRACE can be used in cross-site tracing (XST) attacks to steal HTTP-only cookies.",
-				seed,
-				FindingEvidence{Seed: seed.Evidence, Probe: probeEvidence(result)},
-				"API7:2023 Security Misconfiguration", 16,
-				"Disable HTTP TRACE and TRACK methods at the server or reverse proxy level.",
-			)}
-		},
-	}}, nil
+		probes = append(probes, Probe{
+			RuleID:  r.ID(),
+			Request: req,
+			Evaluate: func(result executor.HTTPResult) []Finding {
+				if result.StatusCode != http.StatusOK {
+					return nil
+				}
+				ct := strings.ToLower(result.ResponseHeaders["Content-Type"])
+				if !strings.Contains(ct, "message") && !strings.Contains(ct, "http") {
+					return nil
+				}
+				return []Finding{newFinding(
+					r.ID(), SeverityLow, ConfidenceMedium,
+					"HTTP "+capturedMethod+" method enabled",
+					"The server responded to an HTTP "+capturedMethod+" request. "+capturedMethod+" can be used in cross-site tracing (XST) attacks to steal HTTP-only cookies.",
+					seed,
+					FindingEvidence{Seed: seed.Evidence, Probe: probeEvidence(result)},
+					"API7:2023 Security Misconfiguration", 16,
+					"Disable HTTP TRACE and TRACK methods at the server or reverse proxy level.",
+				)}
+			},
+		})
+	}
+	return probes, nil
 }
 
 // MethodOverride checks whether the server honours method override headers, which
@@ -211,6 +217,56 @@ func (r *MethodOverride) Check(seed executor.Result, _ auth.Context) ([]Probe, [
 					FindingEvidence{Seed: seed.Evidence, Probe: probeEvidence(result)},
 					"API7:2023 Security Misconfiguration", 650,
 					"Disable HTTP method override headers unless explicitly required. Enforce method-based access control at the transport layer.",
+				)}
+			},
+		})
+	}
+	return probes, nil
+}
+
+// IPSourceBypass checks whether adding a loopback source-IP header to an
+// unauthenticated request yields a successful response. Some services grant
+// implicit trust to requests appearing to originate from localhost or internal
+// networks, making these headers a bypass vector when not properly sanitised.
+type IPSourceBypass struct{}
+
+func (r *IPSourceBypass) ID() string { return "HDR005" }
+
+var ipBypassHeaders = []string{
+	"X-Forwarded-For",
+	"X-Real-IP",
+	"X-Originating-IP",
+	"X-Client-IP",
+	"True-Client-IP",
+}
+
+func (r *IPSourceBypass) Check(seed executor.Result, _ auth.Context) ([]Probe, []Finding) {
+	if seed.AuthContextName == "" {
+		return nil, nil
+	}
+	probes := make([]Probe, 0, len(ipBypassHeaders))
+	for _, hdrName := range ipBypassHeaders {
+		capturedHdr := hdrName
+		req := seedBaseRequest(seed)
+		req.ID = probeID(seed, r.ID()+"-"+hdrName)
+		// No auth context — only the IP spoof header is sent.
+		req.Headers = map[string]string{capturedHdr: "127.0.0.1"}
+
+		probes = append(probes, Probe{
+			RuleID:  r.ID(),
+			Request: req,
+			Evaluate: func(result executor.HTTPResult) []Finding {
+				if !probeSucceeded(result) {
+					return nil
+				}
+				return []Finding{newFinding(
+					r.ID(), SeverityHigh, ConfidenceMedium,
+					"IP-based authentication bypass via "+capturedHdr,
+					"The endpoint returned a successful response with no authentication credentials when "+capturedHdr+": 127.0.0.1 was added, indicating IP-based access control may be bypassable.",
+					seed,
+					FindingEvidence{Seed: seed.Evidence, Probe: probeEvidence(result)},
+					"API2:2023 Broken Authentication", 287,
+					"Do not use source IP as an authentication mechanism. Enforce token-based authentication on every request regardless of apparent source address.",
 				)}
 			},
 		})

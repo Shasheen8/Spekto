@@ -1064,7 +1064,7 @@ Generate valid, authenticated requests before attempting deeper mutation rules.
 
 - [x] Phase 4.1: Rule engine and orchestration
 - [x] Phase 4.2: First REST rule set
-- [ ] Phase 4.3: Mutation strategies (query, path, header, body)
+- [x] Phase 4.3: Mutation strategies and targeted operation scoping
 
 ### Goal
 
@@ -1086,11 +1086,20 @@ Deliver the first useful production-ready scanner slice on REST.
   - [x] JWT003: blank secret — HMAC-SHA256 with empty key
   - [x] JWT004: weak secret — HMAC-SHA256 with 13 common secrets
   - [x] JWT005: KID injection — path traversal and SQL payloads in kid header
+  - [x] JWT006: signature not verified — corrupted non-empty signature, distinct from null sig
   - [x] HDR001: security headers — HSTS (HTTPS only), CSP, X-Frame-Options
   - [x] HDR002: CORS misconfiguration — reflected origin, wildcard, credentials escalation
-  - [x] HDR003: TRACE enabled — TRACE method probe, message/http content-type check
+  - [x] HDR003: TRACE/TRACK enabled — both methods probed, message/http content-type check
   - [x] HDR004: method override — X-HTTP-Method-Override/X-Method-Override/X-HTTP-Method
-- [ ] Build mutation strategies (query parameter, path parameter, header, JSON body)
+- [x] Build mutation strategies
+  - [x] HDR005: IP source bypass — X-Forwarded-For/X-Real-IP/X-Client-IP without auth
+  - [x] PARAM001: privilege escalation params — admin=true/role=admin/debug=true without auth
+  - [x] BODY001: mass assignment — inject role/is_admin/permissions into JSON body, flag reflection
+  - path parameter mutation — deferred to Phase 7 (BOLA/IDOR)
+- [x] Targeted operation scoping
+  - [x] `--operation` flag — match by operation ID or locator substring
+  - [x] `--tag` flag — match by tag, OR logic across multiple values
+  - [x] `ScanOptions.IncludeOperations` and `ScanOptions.IncludeTags` in executor
 
 ### Implementation Notes
 
@@ -1107,7 +1116,7 @@ Deliver the first useful production-ready scanner slice on REST.
 
 - [x] one stable REST scan flow
 - [x] replayable findings for the first rule set
-- [ ] targeted CLI runs for a single endpoint, tag, or service (phase 4.3)
+- [x] targeted CLI runs for a single endpoint, tag, or service
 
 ## Phase 5: GraphQL Coverage
 

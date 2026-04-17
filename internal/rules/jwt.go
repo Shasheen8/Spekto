@@ -208,6 +208,50 @@ func (r *JWTWeakSecret) Check(seed executor.Result, authCtx auth.Context) ([]Pro
 	return probes, nil
 }
 
+// JWTSignatureNotVerified checks whether the server accepts a JWT with a
+// deliberately corrupted but non-empty signature. A null-signature check (JWT002)
+// may be caught by a simple non-empty guard; this probe verifies that actual
+// cryptographic validation is performed against the full signature bytes.
+type JWTSignatureNotVerified struct{}
+
+func (r *JWTSignatureNotVerified) ID() string { return "JWT006" }
+
+func (r *JWTSignatureNotVerified) Check(seed executor.Result, authCtx auth.Context) ([]Probe, []Finding) {
+	hdr, payload, sig, ok := jwtParts(authCtx.BearerToken)
+	if !ok || sig == "" {
+		return nil, nil
+	}
+	corrupted := corruptBase64Tail(sig)
+	if corrupted == sig {
+		return nil, nil
+	}
+	tampered := hdr + "." + payload + "." + corrupted
+
+	return []Probe{buildJWTProbe(
+		r.ID(), seed, tampered,
+		SeverityCritical,
+		"JWT signature not verified",
+		"The server accepted a JWT with a deliberately corrupted signature, indicating that cryptographic signature validation is not enforced.",
+		"API2:2023 Broken Authentication", 347,
+		"Always verify the JWT signature using the correct algorithm and key before trusting any claims in the token.",
+	)}, nil
+}
+
+// corruptBase64Tail flips the last character of a base64url string to a
+// different valid base64url character, producing a cryptographically invalid
+// but structurally well-formed signature segment.
+func corruptBase64Tail(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	last := s[len(s)-1]
+	replacement := byte('A')
+	if last == 'A' {
+		replacement = 'B'
+	}
+	return s[:len(s)-1] + string(replacement)
+}
+
 // JWTKIDInjection checks whether the JWT kid header parameter is injectable.
 // A malicious kid value may cause path traversal or SQL injection in the key lookup.
 type JWTKIDInjection struct{}
