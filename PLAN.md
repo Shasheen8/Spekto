@@ -7,6 +7,21 @@
 - Keep planning consolidated in this single `PLAN.md` unless execution tracking is explicitly requested.
 - Update `PLAN.md` after every push so task status stays aligned with the latest shipped state.
 
+## Phase Status
+
+| Phase | Description | Status |
+|---|---|---|
+| 0 | Scope and design contract | ✅ Complete |
+| 1 | Canonical endpoint inventory | ✅ Complete |
+| 2 | Auth, sessions, and execution core | ✅ Complete |
+| 3 | Seed generation and coverage diagnostics | ✅ Complete |
+| 4 | REST vertical slice — 15 security rules | ✅ Complete |
+| 5 | GraphQL coverage — 3 GraphQL rules, argument hints | ✅ Complete |
+| 6 | gRPC coverage | ⬜ Not started |
+| 7 | Stateful authorization (BOLA, BFLA) | ⬜ Not started |
+| 8 | Reporting, coverage, operator UX | ⬜ Not started |
+| 9 | Validation and hardening | ⬜ Not started |
+
 ## Objective
 
 Build `Spekto` as a Go API security scanner that works in two operating modes:
@@ -968,6 +983,10 @@ and coverage accounting across all traffic sources.
 - one dedupe strategy that works across multiple sources
 
 ## Phase 2: Auth, Sessions, and Execution Core
+
+### Status
+
+- [x] Phase 2 complete
 
 ### Goal
 

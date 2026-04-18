@@ -4,23 +4,23 @@
   <img src="docs/images/spekto_circular.png" alt="Spekto logo" width="220" />
 </p>
 
-Spekto is a Go CLI for API inventory, seed generation, and bounded protocol execution.
+Spekto is a Go CLI for API security scanning across REST, GraphQL, and gRPC.
 
 Current repository scope:
 
-- `cmd/spekto` provides `discover` and `scan`
-- `internal/protocol/rest` ingests Swagger `2.0` and OpenAPI `3.0.x`, `3.1.x`, and `3.2.x`
-- `internal/protocol/graphql` ingests SDL and standard introspection JSON
-- `internal/protocol/grpc` ingests `.proto`, descriptor sets, and reflection
-- `internal/inventory` merges spec, traffic, active, and manual sources into one canonical inventory
-- `internal/seed` generates request candidates from inventory metadata and operator hints; persists successful requests as seeds
-- `internal/executor` executes inventory-backed `REST`, `GraphQL`, and unary `gRPC` requests and writes one evidence bundle format with coverage diagnostics
+- `cmd/spekto` — `discover` and `scan` entry points
+- `internal/protocol/rest` — ingests Swagger `2.0` and OpenAPI `3.0.x`, `3.1.x`, `3.2.x`
+- `internal/protocol/graphql` — ingests SDL and standard introspection JSON
+- `internal/protocol/grpc` — ingests `.proto`, descriptor sets, and reflection
+- `internal/inventory` — merges spec, traffic, active, and manual sources into one canonical inventory; normalizes dynamic path segments from observed traffic
+- `internal/seed` — generates request candidates from inventory metadata and operator hints; persists successful requests as seeds
+- `internal/executor` — executes inventory-backed REST, GraphQL, and unary gRPC requests; writes evidence bundles with coverage diagnostics
+- `internal/rules` — rule engine with 18 security rules across REST and GraphQL
 
 Current runtime limits:
 
-- `scan` is an execution core, not a vulnerability engine yet
-- `gRPC` execution is unary only
-- streaming `gRPC` methods are skipped
+- gRPC execution is unary only; streaming gRPC methods are skipped
+- stateful authorization checks (BOLA, BFLA) are Phase 7
 
 ## Build
 
@@ -52,7 +52,9 @@ Example:
 
 ### `discover traffic`
 
-Build canonical inventory from observed traffic.
+Build canonical inventory from observed traffic. Numeric and UUID path segments
+are automatically normalized (`/users/42` → `/users/{id}`) so multiple observations
+of the same operation collapse to one record.
 
 Flags:
 
@@ -84,7 +86,7 @@ Example:
 
 ### `discover active`
 
-Run bounded active discovery.
+Run bounded active discovery against common spec and GraphQL paths.
 
 Flags:
 
@@ -115,26 +117,38 @@ Example:
 
 ### `scan`
 
-Execute scoped requests from a canonical inventory using config-defined targets and auth contexts.
+Execute scoped requests, capture seeds, and run security rules.
 
 Flags:
 
 - `--config`
 - `--inventory`
-- `--target`
-- `--exclude-target`
-- `--auth-context`
+- `--target` — target name to include (repeatable)
+- `--exclude-target` — target name to exclude (repeatable)
+- `--auth-context` — auth context name to include (repeatable)
+- `--operation` — operation ID or locator substring to include (repeatable)
+- `--tag` — tag to include, OR logic (repeatable)
 - `--concurrency`
 - `--request-budget`
 - `--timeout`
 - `--follow-redirects`
-- `--seed-store`
+- `--seed-store` — path to seed store JSON; captures successful requests
+- `--findings-out` — path to findings JSON; defaults to stderr summary when bundle goes to stdout
+- `--no-rules` — skip rule-based scanning after seeding
 - `--out`
 
 Example:
 
 ```bash
-./spekto scan --config spekto.yaml --inventory inventory.json --target rest-prod --auth-context prod-bearer --out evidence.json
+./spekto scan \
+  --config spekto.yaml \
+  --inventory inventory.json \
+  --target rest-prod \
+  --auth-context prod-bearer \
+  --operation GET:/v1/models \
+  --seed-store seeds.json \
+  --findings-out findings.json \
+  --out evidence.json
 ```
 
 Minimal config:
@@ -165,7 +179,8 @@ scan:
 
 # Operator-provided seed values (optional).
 # path_params and query_params are matched by exact parameter name.
-# constants act as a fallback pool across all parameter locations.
+# constants act as a fallback pool across all parameter locations,
+# including GraphQL argument names.
 resource_hints:
   path_params:
     model_id: "meta-llama/Llama-3.3-70B-Instruct-Turbo"
@@ -174,11 +189,35 @@ resource_hints:
 
 output:
   seed_store_path: seeds.json
+  findings_path: findings.json
 ```
 
-## Inputs
+## Security Rules
 
-Spekto currently accepts:
+`scan` runs security rules automatically after seeding. Use `--no-rules` to skip.
+
+| ID | Rule | Protocols |
+|---|---|---|
+| AUTH001 | Authentication bypass | REST, GraphQL |
+| AUTH002 | Invalid authentication accepted | REST, GraphQL |
+| JWT001 | JWT `alg=none` | REST, GraphQL |
+| JWT002 | JWT null signature | REST, GraphQL |
+| JWT003 | JWT blank HMAC secret | REST, GraphQL |
+| JWT004 | JWT weak HMAC secret (13 common values) | REST, GraphQL |
+| JWT005 | JWT KID injection | REST, GraphQL |
+| JWT006 | JWT signature not verified | REST, GraphQL |
+| HDR001 | Security headers (HSTS, CSP, X-Frame-Options) | REST, GraphQL |
+| HDR002 | CORS misconfiguration | REST, GraphQL |
+| HDR003 | TRACE/TRACK method enabled | REST, GraphQL |
+| HDR004 | HTTP method override | REST only |
+| HDR005 | IP source bypass | REST, GraphQL |
+| PARAM001 | Privilege escalation via query parameter | REST only |
+| BODY001 | Mass assignment | REST only |
+| GQL001 | GraphQL introspection without authentication | GraphQL only |
+| GQL002 | GraphQL authentication bypass | GraphQL only |
+| GQL003 | GraphQL batch query abuse | GraphQL only |
+
+## Inputs
 
 - Swagger `2.0`
 - OpenAPI `3.0.x`, `3.1.x`, `3.2.x`
@@ -194,29 +233,30 @@ Spekto currently accepts:
 
 ## Outputs
 
-`discover` writes canonical inventory JSON with:
+`discover` writes canonical inventory JSON with stable operation IDs, protocol
+locators, provenance flags, confidence scores, auth hints, schema references,
+protocol-specific metadata, and derived signals (`specified_but_unseen`,
+`observed_but_undocumented`).
 
-- stable operation IDs
-- protocol locators
-- provenance flags
-- confidence
-- auth hints
-- schema references
-- protocol-specific metadata
-- derived signals such as `specified_but_unseen` and `observed_but_undocumented`
+`scan` writes two outputs:
 
-`scan` writes evidence bundle JSON with:
-
-- target and protocol
+**Evidence bundle** (`--out`):
+- target and protocol per result
 - operation ID and locator
 - selected auth context
-- request evidence
-- response evidence
-- schema gaps (parameter names where only a type fallback was used)
-- summary by target and protocol
-- coverage report with per-result block reason classification (`auth_missing`, `budget_exceeded`, `streaming_unsupported`, `schema_gap`, `bad_status`, `network_error`)
+- full request and response evidence (headers, body, timing)
+- schema gaps — parameter names where only a type fallback was used
+- summary and coverage report with per-result block reason classification
 
-When `--seed-store` is set, successful requests are captured to a seed store JSON file keyed by (operation, auth context). The store is additive — re-running a scan updates only the records that succeed.
+**Findings** (`--findings-out`):
+- rule ID, severity, and confidence
+- OWASP API Top 10 category and CWE
+- seed evidence (the baseline request that succeeded)
+- probe evidence (the mutated request that triggered the finding)
+- remediation guidance
+- summary by severity and rule
+
+When `--seed-store` is set, successful requests are persisted keyed by (operation, auth context). The store is additive — re-running a scan updates only records that succeed.
 
 ## Safety Defaults
 
@@ -224,10 +264,11 @@ When `--seed-store` is set, successful requests are captured to a seed store JSO
 - active HTTP discovery is limited to common spec and GraphQL entrypoints
 - gRPC active discovery only uses explicit reflection targets
 - HTTP redirects are disabled by default
-- HTTP retries are limited to safe methods
-- response bodies are size-bounded
-- request execution uses worker limits and optional rate limiting
-- credentials are redacted from headers, cookies, and API-key query params
+- HTTP retries are limited to safe methods (GET, HEAD, OPTIONS)
+- response bodies are size-bounded (default 64 KB)
+- request execution uses bounded worker pools and optional rate limiting
+- credentials are redacted from headers, cookies, and API-key query params in all evidence
+- rule probe budget is capped per seed (default 50 probes)
 
 ## Development
 
