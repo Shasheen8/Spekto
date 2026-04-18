@@ -6,6 +6,7 @@ import (
 
 	"github.com/Shasheen8/Spekto/internal/auth"
 	"github.com/Shasheen8/Spekto/internal/executor"
+	"github.com/Shasheen8/Spekto/internal/inventory"
 )
 
 // SecurityHeaders checks for missing HTTP security response headers by analysing
@@ -176,6 +177,11 @@ var overrideHeaders = []string{
 }
 
 func (r *MethodOverride) Check(seed executor.Result, _ auth.Context) ([]Probe, []Finding) {
+	// Method override doesn't apply to GraphQL — GraphQL always uses POST and
+	// operation semantics are defined in the query body, not the HTTP method.
+	if seed.Protocol != inventory.ProtocolREST {
+		return nil, nil
+	}
 	// Only probe GET and POST — those are the methods typically overridden.
 	m := strings.ToUpper(seed.Evidence.Request.Method)
 	if m != http.MethodGet && m != http.MethodPost {

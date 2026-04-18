@@ -1123,27 +1123,43 @@ Deliver the first useful production-ready scanner slice on REST.
 
 ## Phase 5: GraphQL Coverage
 
+### Status
+
+- [x] Phase 5 complete
+
 ### Goal
 
 Move GraphQL from endpoint checking to schema-aware operation coverage.
 
 ### Tasks
 
-- Build concrete operation generation from schema
-- Build valid argument generation
-- Build first GraphQL rules
-  - introspection enabled
-  - authentication bypass
-  - misconfiguration rules that apply to HTTP transport
-- Build resource reuse
-  - chain IDs from list or create responses into follow-up operations
-  - compare field visibility across auth contexts
+- [x] Build valid argument generation
+  - [x] Resource hints by argument name resolve via `constants` map
+  - [x] `ID!` arguments use UUID placeholder instead of "sample" to pass format validation
+  - [x] `quoteGraphQLValue` wraps hint values correctly for string/ID vs numeric/boolean types
+- [x] Build first GraphQL rules
+  - [x] GQL001: Introspection accessible without auth — sends `{__schema{queryType{name}}}` unauthenticated
+  - [x] GQL002: GraphQL auth bypass — strips auth, rejects error-only responses as proper rejections
+  - [x] GQL003: Batch query abuse — sends 10-element batch, flags JSON array response
+  - [x] Existing HTTP rules (auth bypass, JWT, CORS, headers, TRACE, IP bypass) now apply to GraphQL seeds
+  - [x] REST-only rules (method override, mass assignment, privilege params) skip GraphQL via protocol guard
+- [x] Resource hints for argument generation threaded through `ScanOptions` → `scanGraphQLTarget` → `buildGraphQLRequests` → `graphqlQuery`
+- [ ] Build resource reuse (chain IDs, compare field visibility across auth contexts) — deferred to Phase 7
+
+### Implementation Notes
+
+- `internal/rules/graphql.go` — GQL001, GQL002, GQL003
+- `internal/executor/adapter_http.go` — `graphqlArgValue` resolves by hint name; `graphqlLiteral` uses UUID for ID type; `quoteGraphQLValue` escapes backslash before quote to prevent double-escaping
+- GQL002 uses JSON-aware null check (`gqlResponseDataIsNull`) to correctly treat `{"data":null,"errors":[...]}` as an auth rejection, not a bypass
+- `rules.Scan` now processes REST and GraphQL seeds; gRPC remains separate
+- GraphQL-specific rules guard on `seed.Protocol != inventory.ProtocolGraphQL`
+- REST-only rules guard on `seed.Protocol != inventory.ProtocolREST`
 
 ### Exit Criteria
 
-- schema-aware GraphQL operation generation
-- valid seed generation for queries and mutations
-- at least one role-aware GraphQL access check
+- [x] schema-aware GraphQL operation generation (argument types resolved with resource hints)
+- [x] valid seed generation for queries and mutations (UUID IDs, proper type literals)
+- [x] at least one role-aware GraphQL access check (GQL002: authenticated vs unauthenticated comparison)
 
 ## Phase 6: gRPC Coverage
 

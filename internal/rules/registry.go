@@ -23,5 +23,9 @@ func DefaultRules() []Rule {
 		// Parameter and body mutations
 		&PrivilegeEscalationParams{},
 		&MassAssignment{},
+		// GraphQL-specific
+		&GraphQLIntrospectionEnabled{},
+		&GraphQLAuthBypass{},
+		&GraphQLBatchAbuse{},
 	}
 }

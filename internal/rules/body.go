@@ -7,6 +7,7 @@ import (
 
 	"github.com/Shasheen8/Spekto/internal/auth"
 	"github.com/Shasheen8/Spekto/internal/executor"
+	"github.com/Shasheen8/Spekto/internal/inventory"
 )
 
 // MassAssignment checks whether the server silently accepts privilege-related
@@ -31,6 +32,11 @@ var massAssignmentChecks = []struct {
 }
 
 func (r *MassAssignment) Check(seed executor.Result, _ auth.Context) ([]Probe, []Finding) {
+	// GraphQL encodes its operations in the body as structured queries — injecting
+	// extra JSON fields would corrupt the query document rather than test assignment.
+	if seed.Protocol != inventory.ProtocolREST {
+		return nil, nil
+	}
 	// Only applicable to request methods that carry a body.
 	method := strings.ToUpper(seed.Evidence.Request.Method)
 	if method != http.MethodPost && method != http.MethodPut && method != http.MethodPatch {

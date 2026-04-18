@@ -80,7 +80,7 @@ func TestScanGraphQLTargetProducesGraphQLQuery(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("json decode returned error: %v", err)
 		}
-		if payload.Query != `query { model(id: "sample") { id } }` {
+		if payload.Query != `query { model(id: "00000000-0000-0000-0000-000000000000") { id } }` {
 			t.Fatalf("unexpected graphql query: %s", payload.Query)
 		}
 		w.Header().Set("Content-Type", "application/json")

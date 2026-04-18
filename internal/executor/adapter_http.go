@@ -43,14 +43,14 @@ func buildRESTRequests(targetBaseURL string, operation inventory.Operation, auth
 	return requests, nil
 }
 
-func buildGraphQLRequests(endpoint string, operation inventory.Operation, authContextNames []string) ([]HTTPRequest, error) {
+func buildGraphQLRequests(endpoint string, operation inventory.Operation, authContextNames []string, hints config.ResourceHints) ([]HTTPRequest, error) {
 	if operation.GraphQL == nil {
 		return nil, fmt.Errorf("graphql operation %q is missing graphql details", operation.ID)
 	}
 	if operation.GraphQL.RootKind == "subscription" {
 		return nil, fmt.Errorf("subscriptions are not supported by the phase 2 graphql adapter")
 	}
-	query := graphqlQuery(operation)
+	query := graphqlQuery(operation, hints)
 	body, err := json.Marshal(map[string]string{"query": query})
 	if err != nil {
 		return nil, err
@@ -100,7 +100,7 @@ func resolveRESTURL(baseURL, normalizedPath string, pathValues, queryValues map[
 	return parsed.String(), nil
 }
 
-func graphqlQuery(operation inventory.Operation) string {
+func graphqlQuery(operation inventory.Operation, hints config.ResourceHints) string {
 	rootKind := operation.GraphQL.RootKind
 	name := operation.GraphQL.OperationName
 	if name == "" {
@@ -112,7 +112,9 @@ func graphqlQuery(operation inventory.Operation) string {
 		if len(parts) != 2 {
 			continue
 		}
-		args = append(args, fmt.Sprintf("%s: %s", parts[0], graphqlLiteral(parts[1])))
+		argName := parts[0]
+		argType := parts[1]
+		args = append(args, fmt.Sprintf("%s: %s", argName, graphqlArgValue(argName, argType, hints)))
 	}
 	argString := ""
 	if len(args) > 0 {
@@ -124,6 +126,31 @@ func graphqlQuery(operation inventory.Operation) string {
 	}
 	selection := strings.Join(selectionHints, " ")
 	return fmt.Sprintf("%s { %s%s { %s } }", rootKind, name, argString, selection)
+}
+
+// graphqlArgValue resolves a GraphQL argument value. Resource hints by argument
+// name take priority; otherwise the type-based literal is used.
+func graphqlArgValue(argName, typeName string, hints config.ResourceHints) string {
+	if v := hints.Constants[argName]; v != "" {
+		return quoteGraphQLValue(v, typeName)
+	}
+	return graphqlLiteral(typeName)
+}
+
+// quoteGraphQLValue wraps a hint value in quotes for string/ID types,
+// leaving numeric and boolean types unquoted. Backslash is escaped before
+// quote so that a value like `a"b` produces `"a\"b"` not `"a\\"b"`.
+func quoteGraphQLValue(value, typeName string) string {
+	norm := strings.TrimSuffix(strings.TrimSuffix(
+		strings.TrimPrefix(strings.TrimSpace(typeName), "["), "]"), "!")
+	switch norm {
+	case "Int", "Float", "Boolean":
+		return value
+	default:
+		value = strings.ReplaceAll(value, `\`, `\\`)
+		value = strings.ReplaceAll(value, `"`, `\"`)
+		return `"` + value + `"`
+	}
 }
 
 func graphqlLiteral(typeName string) string {
@@ -138,7 +165,11 @@ func graphqlLiteral(typeName string) string {
 		return "1.0"
 	case "Boolean":
 		return "true"
-	case "ID", "String":
+	case "ID":
+		// Use a recognisable UUID-shaped placeholder rather than "sample" so that
+		// servers with ID format validation don't reject the request immediately.
+		return `"00000000-0000-0000-0000-000000000000"`
+	case "String":
 		return `"sample"`
 	default:
 		return `"sample"`

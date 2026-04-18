@@ -74,7 +74,7 @@ func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, optio
 			}
 			bundle.Results = append(bundle.Results, results...)
 		case "graphql":
-			results, err := scanGraphQLTarget(ctx, target, operations, registry, policy, options.AuthContexts)
+			results, err := scanGraphQLTarget(ctx, target, operations, registry, policy, options.AuthContexts, options.ResourceHints)
 			if err != nil {
 				return Bundle{}, err
 			}
@@ -131,7 +131,7 @@ func scanRESTTarget(ctx context.Context, target config.Target, operations []inve
 	return results, nil
 }
 
-func scanGraphQLTarget(ctx context.Context, target config.Target, operations []inventory.Operation, registry auth.Registry, policy HTTPPolicy, selectedAuthContexts []string) ([]Result, error) {
+func scanGraphQLTarget(ctx context.Context, target config.Target, operations []inventory.Operation, registry auth.Registry, policy HTTPPolicy, selectedAuthContexts []string, hints config.ResourceHints) ([]Result, error) {
 	endpoint := target.Endpoint
 	if strings.TrimSpace(endpoint) == "" {
 		endpoint = target.BaseURL
@@ -149,7 +149,7 @@ func scanGraphQLTarget(ctx context.Context, target config.Target, operations []i
 			results = append(results, *skipResult)
 			continue
 		}
-		built, err := buildGraphQLRequests(endpoint, operation, authContextNames)
+		built, err := buildGraphQLRequests(endpoint, operation, authContextNames, hints)
 		if err != nil {
 			results = append(results, failedProtocolResult(target, operation, "", endpoint, err))
 			continue

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Shasheen8/Spekto/internal/auth"
 	"github.com/Shasheen8/Spekto/internal/executor"
+	"github.com/Shasheen8/Spekto/internal/inventory"
 )
 
 // PrivilegeEscalationParams checks whether adding privilege-related query
@@ -26,6 +27,10 @@ var privilegeQueryParams = []struct{ name, value string }{
 }
 
 func (r *PrivilegeEscalationParams) Check(seed executor.Result, _ auth.Context) ([]Probe, []Finding) {
+	// GraphQL operations don't use URL query parameters for auth or privilege control.
+	if seed.Protocol != inventory.ProtocolREST {
+		return nil, nil
+	}
 	if seed.AuthContextName == "" {
 		return nil, nil
 	}

@@ -38,7 +38,12 @@ func Scan(ctx context.Context, seeds []executor.Result, registry auth.Registry, 
 	var allFindings []Finding
 
 	for _, seed := range seeds {
-		if seed.Status != "succeeded" || seed.Protocol != inventory.ProtocolREST {
+		if seed.Status != "succeeded" {
+			continue
+		}
+		// Apply rules to REST and GraphQL — both use HTTP transport.
+		// gRPC has a distinct execution model and is handled separately.
+		if seed.Protocol != inventory.ProtocolREST && seed.Protocol != inventory.ProtocolGraphQL {
 			continue
 		}
 
