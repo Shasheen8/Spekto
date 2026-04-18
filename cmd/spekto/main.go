@@ -497,6 +497,11 @@ func runScan(args []string) error {
 	if err != nil {
 		return err
 	}
+	grpcFindings, err := rules.GRPCScan(context.Background(), bundle.Results, cfg.Targets, registry, policy)
+	if err != nil {
+		return err
+	}
+	findings = append(findings, grpcFindings...)
 	if len(findings) == 0 {
 		return nil
 	}

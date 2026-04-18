@@ -17,7 +17,7 @@
 | 3 | Seed generation and coverage diagnostics | ✅ Complete |
 | 4 | REST vertical slice — 15 security rules | ✅ Complete |
 | 5 | GraphQL coverage — 3 GraphQL rules, argument hints | ✅ Complete |
-| 6 | gRPC coverage | ⬜ Not started |
+| 6 | gRPC coverage — 4 gRPC rules | ✅ Complete |
 | 7 | Stateful authorization (BOLA, BFLA) | ⬜ Not started |
 | 8 | Reporting, coverage, operator UX | ⬜ Not started |
 | 9 | Validation and hardening | ⬜ Not started |
@@ -1182,27 +1182,39 @@ Move GraphQL from endpoint checking to schema-aware operation coverage.
 
 ## Phase 6: gRPC Coverage
 
+### Status
+
+- [x] Phase 6 complete
+
 ### Goal
 
-Add real gRPC support instead of treating it as an afterthought.
+Add real gRPC security coverage on top of the existing gRPC execution infrastructure.
 
 ### Tasks
 
-- Build reflection-based inventory
-- Build proto and descriptor ingestion
-- Build unary invocation and evidence capture
-- Add initial gRPC checks
-  - unauthenticated method access
-  - metadata auth handling issues
-  - reflection exposure classification
-  - error detail leakage
-- Add streaming support only after unary stability
+- [x] Reflection-based inventory (Phase 1 — already complete)
+- [x] Proto and descriptor ingestion (Phase 1 — already complete)
+- [x] Unary invocation and evidence capture (Phase 2 — already complete)
+- [x] Add gRPC security checks
+  - [x] GRPC001: unauthenticated method access
+  - [x] GRPC002: invalid auth metadata accepted
+  - [x] GRPC003: server reflection accessible without authentication
+  - [x] GRPC004: error response leaks internal implementation details
+- Streaming gRPC — deferred (unary stability established)
+
+### Implementation Notes
+
+- `executor.ProbeGRPCMethod` — dials target without auth context, resolves method via reflection, invokes with optional extra metadata
+- `executor.ProbeGRPCReflection` — tests `ListServices` without auth
+- `rules.GRPCScan` — separate orchestrator (gRPC probes require dynamic gRPC invocation, not HTTP); called from `main.go` after `rules.Scan`; deduplicates GRPC003 per endpoint
+- GRPC004 is a static check on existing evidence (no probe); runs on all gRPC results including failures
+- GRPC001/002 require the seed to have used auth (nothing to bypass otherwise)
 
 ### Exit Criteria
 
-- one stable unary gRPC scan path
-- reflection and descriptor support
-- replayable gRPC evidence in reports
+- [x] gRPC security rules running against unary methods
+- [x] reflection and descriptor support (Phase 1)
+- [x] replayable gRPC evidence in reports (Phase 2)
 
 ## Phase 7: Stateful Authorization
 

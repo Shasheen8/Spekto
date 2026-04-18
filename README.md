@@ -15,7 +15,7 @@ Current repository scope:
 - `internal/inventory` — merges spec, traffic, active, and manual sources into one canonical inventory; normalizes dynamic path segments from observed traffic
 - `internal/seed` — generates request candidates from inventory metadata and operator hints; persists successful requests as seeds
 - `internal/executor` — executes inventory-backed REST, GraphQL, and unary gRPC requests; writes evidence bundles with coverage diagnostics
-- `internal/rules` — rule engine with 18 security rules across REST and GraphQL
+- `internal/rules` — rule engine with 22 security rules across REST, GraphQL, and gRPC
 
 Current runtime limits:
 
@@ -216,6 +216,10 @@ output:
 | GQL001 | GraphQL introspection without authentication | GraphQL only |
 | GQL002 | GraphQL authentication bypass | GraphQL only |
 | GQL003 | GraphQL batch query abuse | GraphQL only |
+| GRPC001 | gRPC method accessible without authentication | gRPC only |
+| GRPC002 | gRPC method accepts invalid auth metadata | gRPC only |
+| GRPC003 | gRPC server reflection exposed without authentication | gRPC only |
+| GRPC004 | gRPC error response leaks internal details | gRPC only |
 
 ## Inputs
 

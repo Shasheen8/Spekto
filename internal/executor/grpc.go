@@ -225,6 +225,71 @@ func closeGRPCRuntimes(runtimes map[string]*grpcRuntime) {
 	}
 }
 
+// ProbeGRPCMethod invokes a single unary gRPC method without a named auth context.
+// extraMeta is applied as outgoing gRPC metadata — pass nil for a fully
+// unauthenticated probe. Returns the gRPC status code string ("OK",
+// "UNAUTHENTICATED", etc.) and any response body; a connection or reflection
+// error results in an empty code and a non-nil error.
+func ProbeGRPCMethod(ctx context.Context, target config.Target, serviceName, methodName string, extraMeta map[string]string, policy HTTPPolicy) (code string, body []byte, err error) {
+	endpoint, dialOpt, err := grpcDialOption(target, auth.Context{})
+	if err != nil {
+		return "", nil, err
+	}
+	conn, err := grpc.DialContext(ctx, endpoint, dialOpt)
+	if err != nil {
+		return "", nil, err
+	}
+	defer conn.Close()
+
+	rc := grpcreflect.NewClientV1Alpha(ctx, grpc_reflection_v1alpha.NewServerReflectionClient(conn))
+	defer rc.Reset()
+
+	svc, err := rc.ResolveService(serviceName)
+	if err != nil {
+		return status.Code(err).String(), nil, nil
+	}
+	method := svc.FindMethodByName(methodName)
+	if method == nil {
+		return codes.NotFound.String(), nil, nil
+	}
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(method.GetInputType())
+
+	reqCtx, cancel := context.WithTimeout(ctx, policy.Timeout)
+	defer cancel()
+	if len(extraMeta) > 0 {
+		reqCtx = metadata.NewOutgoingContext(reqCtx, metadata.New(extraMeta))
+	}
+
+	respMsg, invokeErr := stub.InvokeRpc(reqCtx, method, reqMsg)
+	if invokeErr != nil {
+		return status.Code(invokeErr).String(), nil, nil
+	}
+	respBody, _, _ := marshalDynamicMessage(respMsg, policy.MaxResponseBytes)
+	return codes.OK.String(), respBody, nil
+}
+
+// ProbeGRPCReflection attempts to list services via gRPC server reflection
+// without authentication. Returns service names when reflection is accessible
+// or nil when it is blocked or unavailable.
+func ProbeGRPCReflection(ctx context.Context, target config.Target) ([]string, error) {
+	endpoint, dialOpt, err := grpcDialOption(target, auth.Context{})
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.DialContext(ctx, endpoint, dialOpt)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	rc := grpcreflect.NewClientV1Alpha(ctx, grpc_reflection_v1alpha.NewServerReflectionClient(conn))
+	defer rc.Reset()
+
+	return rc.ListServices()
+}
+
 func grpcDialOption(target config.Target, authContext auth.Context) (string, grpc.DialOption, error) {
 	trimmed := strings.TrimSpace(target.Endpoint)
 	if trimmed == "" {
