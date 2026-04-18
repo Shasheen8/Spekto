@@ -231,17 +231,22 @@ func closeGRPCRuntimes(runtimes map[string]*grpcRuntime) {
 // "UNAUTHENTICATED", etc.) and any response body; a connection or reflection
 // error results in an empty code and a non-nil error.
 func ProbeGRPCMethod(ctx context.Context, target config.Target, serviceName, methodName string, extraMeta map[string]string, policy HTTPPolicy) (code string, body []byte, err error) {
+	// A single deadline covers dial, reflection resolution, and invocation so
+	// no individual step can hang indefinitely on an unreachable server.
+	probeCtx, cancel := context.WithTimeout(ctx, policy.Timeout)
+	defer cancel()
+
 	endpoint, dialOpt, err := grpcDialOption(target, auth.Context{})
 	if err != nil {
 		return "", nil, err
 	}
-	conn, err := grpc.DialContext(ctx, endpoint, dialOpt)
+	conn, err := grpc.DialContext(probeCtx, endpoint, dialOpt)
 	if err != nil {
 		return "", nil, err
 	}
 	defer conn.Close()
 
-	rc := grpcreflect.NewClientV1Alpha(ctx, grpc_reflection_v1alpha.NewServerReflectionClient(conn))
+	rc := grpcreflect.NewClientV1Alpha(probeCtx, grpc_reflection_v1alpha.NewServerReflectionClient(conn))
 	defer rc.Reset()
 
 	svc, err := rc.ResolveService(serviceName)
@@ -256,13 +261,11 @@ func ProbeGRPCMethod(ctx context.Context, target config.Target, serviceName, met
 	stub := grpcdynamic.NewStub(conn)
 	reqMsg := dynamic.NewMessage(method.GetInputType())
 
-	reqCtx, cancel := context.WithTimeout(ctx, policy.Timeout)
-	defer cancel()
 	if len(extraMeta) > 0 {
-		reqCtx = metadata.NewOutgoingContext(reqCtx, metadata.New(extraMeta))
+		probeCtx = metadata.NewOutgoingContext(probeCtx, metadata.New(extraMeta))
 	}
 
-	respMsg, invokeErr := stub.InvokeRpc(reqCtx, method, reqMsg)
+	respMsg, invokeErr := stub.InvokeRpc(probeCtx, method, reqMsg)
 	if invokeErr != nil {
 		return status.Code(invokeErr).String(), nil, nil
 	}
@@ -272,19 +275,22 @@ func ProbeGRPCMethod(ctx context.Context, target config.Target, serviceName, met
 
 // ProbeGRPCReflection attempts to list services via gRPC server reflection
 // without authentication. Returns service names when reflection is accessible
-// or nil when it is blocked or unavailable.
-func ProbeGRPCReflection(ctx context.Context, target config.Target) ([]string, error) {
+// or nil when it is blocked or unavailable. timeout bounds the entire probe.
+func ProbeGRPCReflection(ctx context.Context, target config.Target, timeout time.Duration) ([]string, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	endpoint, dialOpt, err := grpcDialOption(target, auth.Context{})
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.DialContext(ctx, endpoint, dialOpt)
+	conn, err := grpc.DialContext(probeCtx, endpoint, dialOpt)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	rc := grpcreflect.NewClientV1Alpha(ctx, grpc_reflection_v1alpha.NewServerReflectionClient(conn))
+	rc := grpcreflect.NewClientV1Alpha(probeCtx, grpc_reflection_v1alpha.NewServerReflectionClient(conn))
 	defer rc.Reset()
 
 	return rc.ListServices()

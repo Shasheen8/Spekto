@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Shasheen8/Spekto/internal/auth"
 	"github.com/Shasheen8/Spekto/internal/config"
@@ -31,8 +32,9 @@ func GRPCScan(ctx context.Context, seeds []executor.Result, targets []config.Tar
 		targetByName[t.Name] = t
 	}
 
-	// GRPC003 is probed once per unique endpoint, not once per seed.
-	reflectionChecked := map[string]bool{}
+	// Track which (rule, operationID) pairs have already been probed so that
+	// operations seeded by multiple auth contexts are checked only once.
+	probed := map[string]bool{}
 
 	var allFindings []Finding
 
@@ -52,20 +54,27 @@ func GRPCScan(ctx context.Context, seeds []executor.Result, targets []config.Tar
 			continue
 		}
 
-		// GRPC003: once per endpoint.
+		// GRPC003: once per unique endpoint.
 		endpoint := strings.TrimSpace(target.Endpoint)
-		if !reflectionChecked[endpoint] {
-			reflectionChecked[endpoint] = true
-			allFindings = append(allFindings, grpcReflectionExposed(ctx, seed, target)...)
+		if !probed["GRPC003:"+endpoint] {
+			probed["GRPC003:"+endpoint] = true
+			allFindings = append(allFindings, grpcReflectionExposed(ctx, seed, target, policy.Timeout)...)
 		}
 
 		if seed.AuthContextName == "" {
 			continue
 		}
 
-		// GRPC001 and GRPC002 require auth to have been used on the seed.
-		allFindings = append(allFindings, grpcUnauthAccess(ctx, seed, target, policy)...)
-		allFindings = append(allFindings, grpcInvalidAuth(ctx, seed, target, policy)...)
+		// GRPC001/002: once per operation — same method does not need re-probing
+		// if multiple auth contexts seeded it.
+		if !probed["GRPC001:"+seed.OperationID] {
+			probed["GRPC001:"+seed.OperationID] = true
+			allFindings = append(allFindings, grpcUnauthAccess(ctx, seed, target, policy)...)
+		}
+		if !probed["GRPC002:"+seed.OperationID] {
+			probed["GRPC002:"+seed.OperationID] = true
+			allFindings = append(allFindings, grpcInvalidAuth(ctx, seed, target, policy)...)
+		}
 	}
 
 	return allFindings, nil
@@ -115,8 +124,8 @@ func grpcInvalidAuth(ctx context.Context, seed executor.Result, target config.Ta
 }
 
 // grpcReflectionExposed (GRPC003) tests whether reflection is accessible without auth.
-func grpcReflectionExposed(ctx context.Context, seed executor.Result, target config.Target) []Finding {
-	services, err := executor.ProbeGRPCReflection(ctx, target)
+func grpcReflectionExposed(ctx context.Context, seed executor.Result, target config.Target, timeout time.Duration) []Finding {
+	services, err := executor.ProbeGRPCReflection(ctx, target, timeout)
 	if err != nil || len(services) == 0 {
 		return nil
 	}

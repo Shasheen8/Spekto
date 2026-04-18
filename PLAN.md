@@ -1204,9 +1204,9 @@ Add real gRPC security coverage on top of the existing gRPC execution infrastruc
 
 ### Implementation Notes
 
-- `executor.ProbeGRPCMethod` — dials target without auth context, resolves method via reflection, invokes with optional extra metadata
-- `executor.ProbeGRPCReflection` — tests `ListServices` without auth
-- `rules.GRPCScan` — separate orchestrator (gRPC probes require dynamic gRPC invocation, not HTTP); called from `main.go` after `rules.Scan`; deduplicates GRPC003 per endpoint
+- `executor.ProbeGRPCMethod` — single deadline covers dial + reflection resolution + invocation; `extraMeta` applied as outgoing metadata
+- `executor.ProbeGRPCReflection` — accepts explicit `timeout` parameter; single deadline covers dial + `ListServices`
+- `rules.GRPCScan` — separate orchestrator; deduplicates GRPC001/002 per `operationID` and GRPC003 per endpoint to avoid redundant probes when multiple auth contexts seed the same method
 - GRPC004 is a static check on existing evidence (no probe); runs on all gRPC results including failures
 - GRPC001/002 require the seed to have used auth (nothing to bypass otherwise)
 
