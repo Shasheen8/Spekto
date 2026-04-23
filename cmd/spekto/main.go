@@ -372,6 +372,8 @@ func runScan(args []string) error {
 	var findingsPath string
 	var seedStorePath string
 	var noRules bool
+	var stateful bool
+	var allowWriteStateful bool
 	var includeTargets multiValue
 	var excludeTargets multiValue
 	var authContexts multiValue
@@ -388,6 +390,8 @@ func runScan(args []string) error {
 	fs.StringVar(&findingsPath, "findings-out", "", "Output path for findings JSON (default: prints to stdout when findings exist)")
 	fs.StringVar(&seedStorePath, "seed-store", "", "Path to seed store JSON file (captures successful requests)")
 	fs.BoolVar(&noRules, "no-rules", false, "Skip rule-based scanning after seeding")
+	fs.BoolVar(&stateful, "stateful", false, "Enable stateful authorization checks (BOLA001, BFLA001); requires at least two auth contexts")
+	fs.BoolVar(&allowWriteStateful, "allow-write-stateful", false, "Include mutating methods (POST/PUT/PATCH/DELETE) in stateful checks — use with caution")
 	fs.Var(&includeTargets, "target", "Target name to include")
 	fs.Var(&excludeTargets, "exclude-target", "Target name to exclude")
 	fs.Var(&authContexts, "auth-context", "Auth context name to include")
@@ -502,6 +506,17 @@ func runScan(args []string) error {
 		return err
 	}
 	findings = append(findings, grpcFindings...)
+
+	if stateful {
+		statefulFindings, err := rules.StatefulScan(context.Background(), bundle.Results, registry, policy, rules.StatefulOptions{
+			AllowWriteChecks: allowWriteStateful,
+		})
+		if err != nil {
+			return err
+		}
+		findings = append(findings, statefulFindings...)
+	}
+
 	if len(findings) == 0 {
 		return nil
 	}

@@ -15,12 +15,12 @@ Current repository scope:
 - `internal/inventory` — merges spec, traffic, active, and manual sources into one canonical inventory; normalizes dynamic path segments from observed traffic
 - `internal/seed` — generates request candidates from inventory metadata and operator hints; persists successful requests as seeds
 - `internal/executor` — executes inventory-backed REST, GraphQL, and unary gRPC requests; writes evidence bundles with coverage diagnostics
-- `internal/rules` — rule engine with 22 security rules across REST, GraphQL, and gRPC
+- `internal/rules` — rule engine with 24 security rules across REST, GraphQL, and gRPC; stateful authorization checks via `--stateful`
 
 Current runtime limits:
 
 - gRPC execution is unary only; streaming gRPC methods are skipped
-- stateful authorization checks (BOLA, BFLA) are Phase 7
+- stateful checks (BOLA001, BFLA001) require `--stateful` and at least two configured auth contexts
 
 ## Build
 
@@ -135,6 +135,8 @@ Flags:
 - `--seed-store` — path to seed store JSON; captures successful requests
 - `--findings-out` — path to findings JSON; defaults to stderr summary when bundle goes to stdout
 - `--no-rules` — skip rule-based scanning after seeding
+- `--stateful` — enable stateful authorization checks (BOLA001, BFLA001); requires ≥2 auth contexts
+- `--allow-write-stateful` — include mutating methods in stateful checks (use with caution)
 - `--out`
 
 Example:
@@ -220,6 +222,8 @@ output:
 | GRPC002 | gRPC method accepts invalid auth metadata | gRPC only |
 | GRPC003 | gRPC server reflection exposed without authentication | gRPC only |
 | GRPC004 | gRPC error response leaks internal details | gRPC only |
+| BOLA001 | Broken Object Level Authorization (cross-context read) | REST (`--stateful`) |
+| BFLA001 | Broken Function Level Authorization (cross-context write) | REST (`--stateful --allow-write-stateful`) |
 
 ## Inputs
 
