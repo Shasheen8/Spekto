@@ -199,7 +199,6 @@ func (s *httpExecutorState) executeOneHTTP(ctx context.Context, baseClient *http
 	}
 
 	start := time.Now()
-	var lastError string
 	for attempt := 0; attempt <= s.policy.Retries; attempt++ {
 		if err := s.limiter.Wait(ctx); err != nil {
 			result.Error = err.Error()
@@ -211,11 +210,6 @@ func (s *httpExecutorState) executeOneHTTP(ctx context.Context, baseClient *http
 		if !retryable || !isRetrySafeMethod(result.Method) || attempt == s.policy.Retries {
 			return result
 		}
-		lastError = result.Error
-	}
-
-	if lastError != "" {
-		result.Error = lastError
 	}
 	return result
 }

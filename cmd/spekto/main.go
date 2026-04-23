@@ -309,7 +309,7 @@ func runDiscoverMerge(args []string) error {
 		_, err = os.Stdout.Write(append(data, '\n'))
 		return err
 	}
-	return os.WriteFile(outPath, append(data, '\n'), 0o600)
+	return writeFile(outPath, append(data, '\n'))
 }
 
 func writeMergedInventory(outPath string, operationSets ...[]inventory.Operation) error {
@@ -324,7 +324,7 @@ func writeMergedInventory(outPath string, operationSets ...[]inventory.Operation
 		return err
 	}
 
-	return os.WriteFile(outPath, append(data, '\n'), 0o600)
+	return writeFile(outPath, append(data, '\n'))
 }
 
 func usageError() error {
@@ -501,7 +501,7 @@ func runScan(args []string) error {
 			return err
 		}
 	} else {
-		if err = os.WriteFile(outputPath, append(data, '\n'), 0o600); err != nil {
+		if err = writeFile(outputPath, append(data, '\n')); err != nil {
 			return err
 		}
 	}
@@ -545,7 +545,7 @@ func runScan(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(covPath, append(covData, '\n'), 0o600); err != nil {
+		if err := writeFile(covPath, append(covData, '\n')); err != nil {
 			return err
 		}
 	}
@@ -570,7 +570,7 @@ func runScan(args []string) error {
 		fPath = strings.TrimSpace(cfg.Output.FindingsPath)
 	}
 	if fPath != "" {
-		if err := os.WriteFile(fPath, findingsData, 0o600); err != nil {
+		if err := writeFile(fPath, findingsData); err != nil {
 			return err
 		}
 	} else if !bundleToStdout {
@@ -589,7 +589,7 @@ func runScan(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(sPath, append(sarifData, '\n'), 0o600); err != nil {
+		if err := writeFile(sPath, append(sarifData, '\n')); err != nil {
 			return err
 		}
 	}
@@ -712,6 +712,14 @@ func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, exc
 		fmt.Fprintf(os.Stderr, "Allowlist: %s\n", strings.Join(cfg.Scan.TargetAllowlist, ", "))
 	}
 	return nil
+}
+
+// writeFile removes any existing file at path before writing data with 0600
+// permissions. Removing first ensures the permission mode is always applied,
+// even when the file previously existed with weaker permissions.
+func writeFile(path string, data []byte) error {
+	_ = os.Remove(path)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // captureSeeds writes successful scan results to the seed store at storePath.

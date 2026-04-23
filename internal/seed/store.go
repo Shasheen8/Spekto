@@ -53,11 +53,13 @@ func LoadStoreFile(path string) (*Store, error) {
 }
 
 // Save writes the store to a JSON file with 0600 permissions.
+// Any existing file is removed first to ensure permissions are always applied.
 func (s *Store) Save(path string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
+	_ = os.Remove(path)
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 

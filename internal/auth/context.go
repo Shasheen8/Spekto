@@ -534,18 +534,23 @@ func uniqueSchemes(values []inventory.AuthScheme) []inventory.AuthScheme {
 }
 
 func RedactURL(rawURL string, ctx Context) string {
-	if strings.TrimSpace(rawURL) == "" || ctx.APIKeyQueryName == "" {
+	if strings.TrimSpace(rawURL) == "" {
 		return rawURL
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
 	}
-	query := parsed.Query()
-	if _, exists := query[ctx.APIKeyQueryName]; !exists {
-		return rawURL
+	// Strip userinfo (e.g. https://user:pass@host) — credentials must not appear in evidence.
+	if parsed.User != nil {
+		parsed.User = nil
 	}
-	query.Set(ctx.APIKeyQueryName, "[redacted]")
-	parsed.RawQuery = query.Encode()
+	if ctx.APIKeyQueryName != "" {
+		query := parsed.Query()
+		if _, exists := query[ctx.APIKeyQueryName]; exists {
+			query.Set(ctx.APIKeyQueryName, "[redacted]")
+			parsed.RawQuery = query.Encode()
+		}
+	}
 	return parsed.String()
 }
