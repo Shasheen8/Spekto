@@ -137,6 +137,7 @@ Flags:
 - `--no-rules` — skip rule-based scanning after seeding
 - `--stateful` — enable stateful authorization checks (BOLA001, BFLA001); requires ≥2 auth contexts
 - `--allow-write-stateful` — include mutating methods in stateful checks (use with caution)
+- `--dry-run` — print what would be scanned without sending any requests
 - `--out`
 
 Example:
@@ -192,6 +193,36 @@ resource_hints:
 output:
   seed_store_path: seeds.json
   findings_path: findings.json
+
+# Restrict scanning to approved hostnames. Supports wildcards (*.example.com).
+# When set, any target whose host is not in this list is rejected before
+# any requests are sent.
+scan:
+  target_allowlist:
+    - api.together.ai
+    - api.together.xyz
+```
+
+A full production config template is available at [`spekto.example.yaml`](spekto.example.yaml).
+
+## GitHub Actions
+
+A workflow file is available at [`.github/workflows/spekto-scan.yml`](.github/workflows/spekto-scan.yml).
+
+It runs on a weekly schedule and supports manual dispatch with `--target`, `--operation`, and `--no-rules` inputs. Dispatch inputs are passed via environment variables to prevent command injection. Bearer tokens are injected from repository secrets.
+
+To use:
+1. Copy `spekto.example.yaml` to `spekto.yaml` and configure your targets
+2. Place your inventory file at `inventory.json` (or generate it with `discover spec`)
+3. Add `PROD_BEARER_TOKEN` to repository secrets
+4. Enable the workflow
+
+## Pre-flight check
+
+Before a production scan, use `--dry-run` to verify configuration without sending requests:
+
+```bash
+./spekto scan --config spekto.yaml --inventory inventory.json --dry-run
 ```
 
 ## Security Rules

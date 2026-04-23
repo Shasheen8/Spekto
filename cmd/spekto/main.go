@@ -372,6 +372,7 @@ func runScan(args []string) error {
 	var findingsPath string
 	var seedStorePath string
 	var noRules bool
+	var dryRun bool
 	var stateful bool
 	var allowWriteStateful bool
 	var includeTargets multiValue
@@ -390,6 +391,7 @@ func runScan(args []string) error {
 	fs.StringVar(&findingsPath, "findings-out", "", "Output path for findings JSON (default: prints to stdout when findings exist)")
 	fs.StringVar(&seedStorePath, "seed-store", "", "Path to seed store JSON file (captures successful requests)")
 	fs.BoolVar(&noRules, "no-rules", false, "Skip rule-based scanning after seeding")
+	fs.BoolVar(&dryRun, "dry-run", false, "Print what would be scanned without sending any requests")
 	fs.BoolVar(&stateful, "stateful", false, "Enable stateful authorization checks (BOLA001, BFLA001); requires at least two auth contexts")
 	fs.BoolVar(&allowWriteStateful, "allow-write-stateful", false, "Include mutating methods (POST/PUT/PATCH/DELETE) in stateful checks — use with caution")
 	fs.Var(&includeTargets, "target", "Target name to include")
@@ -427,6 +429,10 @@ func runScan(args []string) error {
 	inv, err := inventory.LoadInventoryFile(inventoryPath)
 	if err != nil {
 		return err
+	}
+
+	if dryRun {
+		return printDryRun(cfg, inv, includeTargets, excludeTargets, includeOperations, includeTags, stateful)
 	}
 
 	// Build and resolve the auth registry once so both the seed scan and rule
@@ -604,6 +610,74 @@ func (b *triStateBool) Set(value string) error {
 	default:
 		return fmt.Errorf("invalid boolean value %q", value)
 	}
+}
+
+// printDryRun prints what would be scanned without executing any requests.
+func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, excludeTargets, includeOperations, includeTags []string, stateful bool) error {
+	fmt.Fprintln(os.Stderr, "Spekto dry run — no requests will be sent")
+
+	targets, err := cfg.SelectTargetsFiltered(includeTargets, excludeTargets)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "\nTargets (%d):\n", len(targets))
+	for _, t := range targets {
+		addr := t.BaseURL
+		if t.Endpoint != "" {
+			addr = t.Endpoint
+		}
+		fmt.Fprintf(os.Stderr, "  %-20s %s  %s\n", t.Name, strings.ToUpper(t.Protocol), addr)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInventory (%d operations):\n", inv.Summary.Total)
+	shown := 0
+	for _, op := range inv.Operations {
+		if shown >= 20 {
+			fmt.Fprintf(os.Stderr, "  ... and %d more\n", inv.Summary.Total-shown)
+			break
+		}
+		auth := string(op.AuthHints.RequiresAuth)
+		gaps := ""
+		if len(op.Signals) > 0 {
+			gaps = "  signals=" + strings.Join(op.Signals, ",")
+		}
+		fmt.Fprintf(os.Stderr, "  %-8s  %-50s  conf=%.2f  auth=%s%s\n",
+			op.Protocol, op.Locator, op.Confidence, auth, gaps)
+		shown++
+	}
+
+	fmt.Fprintf(os.Stderr, "\nAuth contexts (%d):\n", len(cfg.AuthContexts))
+	for _, a := range cfg.AuthContexts {
+		schemes := []string{}
+		if a.BearerToken != "" || a.BearerTokenEnv != "" {
+			schemes = append(schemes, "bearer")
+		}
+		if a.APIKeyHeaderName != "" {
+			schemes = append(schemes, "api_key_header")
+		}
+		if a.APIKeyQueryName != "" {
+			schemes = append(schemes, "api_key_query")
+		}
+		if a.BasicUsername != "" || a.BasicUsernameEnv != "" {
+			schemes = append(schemes, "basic")
+		}
+		roles := ""
+		if len(a.Roles) > 0 {
+			roles = "  roles=[" + strings.Join(a.Roles, ",") + "]"
+		}
+		fmt.Fprintf(os.Stderr, "  %-20s schemes=[%s]%s\n", a.Name, strings.Join(schemes, ","), roles)
+	}
+
+	statefulNote := "disabled (use --stateful to enable)"
+	if stateful {
+		statefulNote = "enabled"
+	}
+	fmt.Fprintf(os.Stderr, "\nRules: 24 active  Stateful: %s\n", statefulNote)
+
+	if len(cfg.Scan.TargetAllowlist) > 0 {
+		fmt.Fprintf(os.Stderr, "Allowlist: %s\n", strings.Join(cfg.Scan.TargetAllowlist, ", "))
+	}
+	return nil
 }
 
 // captureSeeds writes successful scan results to the seed store at storePath.

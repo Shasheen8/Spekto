@@ -1,0 +1,75 @@
+name: Spekto API Security Scan
+
+on:
+  schedule:
+    # Non-blocking weekly scan — review findings without gating merges.
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target name (empty = all targets)'
+        required: false
+        default: ''
+      operation:
+        description: 'Operation ID or locator substring (empty = all)'
+        required: false
+        default: ''
+      no_rules:
+        description: 'Skip rule-based scanning (seeding only)'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  scan:
+    name: Security scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build Spekto
+        run: go build -o spekto ./cmd/spekto
+
+      - name: Dry run (validate config and inventory)
+        run: ./spekto scan --config spekto.yaml --inventory inventory.json --dry-run
+        continue-on-error: true
+
+      - name: Run scan
+        env:
+          # Inject bearer tokens from repository secrets.
+          # Reference via bearer_token_env in spekto.yaml.
+          PROD_BEARER_TOKEN: ${{ secrets.PROD_BEARER_TOKEN }}
+          # Dispatch inputs via env to prevent command injection.
+          SCAN_TARGET: ${{ github.event.inputs.target }}
+          SCAN_OPERATION: ${{ github.event.inputs.operation }}
+          SCAN_NO_RULES: ${{ github.event.inputs.no_rules }}
+        run: |
+          ARGS="scan --config spekto.yaml --inventory inventory.json"
+          ARGS="$ARGS --seed-store seeds.json --findings-out findings.json --out evidence.json"
+          [ -n "$SCAN_TARGET" ]    && ARGS="$ARGS --target    $SCAN_TARGET"
+          [ -n "$SCAN_OPERATION" ] && ARGS="$ARGS --operation $SCAN_OPERATION"
+          [ "$SCAN_NO_RULES" = "true" ] && ARGS="$ARGS --no-rules"
+          ./spekto $ARGS
+
+      - name: Upload scan artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spekto-${{ github.run_id }}
+          path: |
+            findings.json
+            evidence.json
+            inventory.json
+            seeds.json
+          retention-days: 30
+          if-no-files-found: ignore

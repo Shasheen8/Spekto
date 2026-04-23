@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -38,6 +40,9 @@ func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, optio
 	}
 	if len(targets) == 0 {
 		return Bundle{}, errors.New("scan requires at least one selected target")
+	}
+	if err := validateTargetAllowlist(cfg.Scan.TargetAllowlist, targets); err != nil {
+		return Bundle{}, err
 	}
 
 	var registry auth.Registry
@@ -306,6 +311,66 @@ func failedProtocolResult(target config.Target, operation inventory.Operation, a
 func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// validateTargetAllowlist rejects any target whose host is not covered by the
+// allowlist. An empty allowlist permits all targets.
+func validateTargetAllowlist(allowlist []string, targets []config.Target) error {
+	if len(allowlist) == 0 {
+		return nil
+	}
+	for _, t := range targets {
+		host := targetHost(t)
+		if host == "" {
+			continue
+		}
+		if !hostAllowed(host, allowlist) {
+			return fmt.Errorf("target %q host %q is not in scan.target_allowlist", t.Name, host)
+		}
+	}
+	return nil
+}
+
+// targetHost extracts the hostname from a target's base_url or endpoint.
+func targetHost(t config.Target) string {
+	if ep := strings.TrimSpace(t.Endpoint); ep != "" {
+		if strings.Contains(ep, "://") {
+			if parsed, err := url.Parse(ep); err == nil {
+				return parsed.Hostname()
+			}
+		}
+		if host, _, err := net.SplitHostPort(ep); err == nil {
+			return host
+		}
+		return ep
+	}
+	if base := strings.TrimSpace(t.BaseURL); base != "" {
+		if parsed, err := url.Parse(base); err == nil {
+			return parsed.Hostname()
+		}
+	}
+	return ""
+}
+
+// hostAllowed returns true when host matches any allowlist pattern.
+// Patterns may be exact hostnames or wildcard prefixes (*.example.com).
+func hostAllowed(host string, allowlist []string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, pattern := range allowlist {
+		p := strings.ToLower(strings.TrimSpace(pattern))
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "*.") {
+			suffix := p[1:] // e.g. ".example.com"
+			if strings.HasSuffix(host, suffix) || host == p[2:] {
+				return true
+			}
+		} else if host == p {
 			return true
 		}
 	}

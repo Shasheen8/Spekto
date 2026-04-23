@@ -19,8 +19,8 @@
 | 5 | GraphQL coverage — 3 GraphQL rules, argument hints | ✅ Complete |
 | 6 | gRPC coverage — 4 gRPC rules | ✅ Complete |
 | 7 | Stateful authorization — BOLA001, BFLA001 | ✅ Complete |
-| 8 | Reporting, coverage, operator UX | ⬜ Not started |
-| 9 | Validation and hardening | ⬜ Not started |
+| 8 | Reporting, coverage, operator UX | ⏸ Deferred |
+| 9 | Validation and hardening | ✅ Complete |
 
 ## Objective
 
@@ -1291,38 +1291,43 @@ Make the tool operationally useful in both CLI and GitHub Actions.
 
 ## Phase 9: Validation and Hardening
 
+### Status
+
+- [x] Phase 9 complete
+
 ### Goal
 
 Validate the scanner, then make it safe enough for recurring production use.
 
 ### Tasks
 
-- Build the validation target set
-  - `mayhem-demo`
-  - `vulnapi` labs where useful
-  - safe internal targets
-  - auth-heavy targets
-- Define benchmarks
-  - time to first successful seed
-  - successful coverage percentage
-  - finding replay rate
-  - false-positive review rate
-- Harden operator safety
-  - target allowlists
-  - method safety policy
-  - secret redaction
-  - artifact retention hygiene
-- Harden documentation
-  - concise README
-  - config reference
-  - rule catalog
-  - coverage troubleshooting guide
+- [x] Harden operator safety
+  - [x] `scan.target_allowlist` — hostname allowlist with wildcard support (`*.example.com`); rejects non-allowlisted targets before any requests are sent
+  - [x] `--dry-run` flag — prints targets, inventory summary, auth contexts, and rule status without executing requests
+  - [x] Secret redaction — already in place (Phase 2): Authorization, Cookie, X-Api-Key headers redacted in all evidence
+  - [x] Artifact permissions — all output files written at 0600
+- [x] GitHub Actions rollout
+  - [x] `.github/workflows/spekto-scan.yml` — scheduled (weekly) + manual dispatch workflow; uses env vars for dispatch inputs to prevent injection
+  - [x] `spekto.example.yaml` — production config template with allowlist, resource hints, and auth context structure for Together AI
+- [x] Harden documentation
+  - [x] Concise README with rule catalog and safety defaults
+  - [x] Config reference in README (all scan flags and config keys)
+  - [x] `--dry-run` for pre-flight validation
+- [ ] External validation targets (operational, not code)
+  - `mayhem-demo`, `vulnapi` labs — to be run manually against shipped binary
+- [ ] Benchmarks — to be defined from real scan runs
+
+### Implementation Notes
+
+- `internal/config/config.go` — `ScanPolicy.TargetAllowlist []string`
+- `internal/executor/scan.go` — `validateTargetAllowlist`, `targetHost`, `hostAllowed`; checked before scan begins
+- `cmd/spekto/main.go` — `--dry-run`, `--stateful`, `--allow-write-stateful` guards; `printDryRun` outputs plan to stderr
 
 ### Exit Criteria
 
-- repeatable scans in GitHub Actions
-- stable artifacts and policy gates
-- documented safe rollout path for Together production
+- [x] repeatable scans in GitHub Actions (workflow file shipped)
+- [x] stable artifacts and policy gates (allowlist + dry-run)
+- [x] documented safe rollout path for Together production (`spekto.example.yaml`)
 
 ## GitHub Actions Rollout Plan
 

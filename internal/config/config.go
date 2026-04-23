@@ -87,6 +87,10 @@ type ScanPolicy struct {
 	RateLimit        float64       `yaml:"rate_limit,omitempty"`
 	MaxResponseBytes int64         `yaml:"max_response_bytes,omitempty"`
 	FollowRedirects  bool          `yaml:"follow_redirects,omitempty"`
+	// TargetAllowlist restricts scanning to targets whose hostname matches an
+	// entry in the list. Supports exact hostnames and wildcard prefixes (*.example.com).
+	// When empty, all configured targets are permitted.
+	TargetAllowlist  []string      `yaml:"target_allowlist,omitempty"`
 }
 
 type OutputConfig struct {

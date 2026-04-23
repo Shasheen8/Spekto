@@ -1,0 +1,54 @@
+targets:
+  - name: rest-prod
+    protocol: rest
+    base_url: https://api.together.ai
+    auth_contexts:
+      - prod-bearer
+
+  - name: graphql-prod
+    protocol: graphql
+    endpoint: https://api.together.ai/graphql
+    auth_contexts:
+      - prod-bearer
+
+  - name: grpc-prod
+    protocol: grpc
+    endpoint: grpc.together.ai:443
+    auth_contexts:
+      - prod-bearer
+
+auth_contexts:
+  - name: prod-bearer
+    # Set PROD_BEARER_TOKEN in environment or CI secrets.
+    bearer_token_env: PROD_BEARER_TOKEN
+
+  # Add a second context to enable stateful BOLA/BFLA checks.
+  # - name: user-bearer
+  #   bearer_token_env: USER_BEARER_TOKEN
+  #   roles:
+  #     - user
+
+scan:
+  concurrency: 4
+  request_budget: 200
+  timeout: 10s
+  retries: 1
+  rate_limit: 5
+  max_response_bytes: 65536
+  # Restrict scanning to approved hostnames. Supports wildcards (*.example.com).
+  target_allowlist:
+    - api.together.ai
+    - api.together.xyz
+
+# Operator-provided values for seed generation.
+# Matched by parameter name (path_params, query_params) or
+# across all locations (constants, including GraphQL argument names).
+resource_hints:
+  constants:
+    model_id: "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    id: "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+
+output:
+  seed_store_path: seeds.json
+  findings_path: findings.json
+  evidence_path: evidence.json
