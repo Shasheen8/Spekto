@@ -1327,6 +1327,7 @@ Validate the scanner, then make it safe enough for recurring production use.
 - `internal/config/config.go` — `ScanPolicy.TargetAllowlist []string`
 - `internal/executor/scan.go` — `validateTargetAllowlist`, `targetHost`, `hostAllowed`; checked before scan begins
 - `cmd/spekto/main.go` — `--dry-run`, `--stateful`, `--allow-write-stateful` guards; `printDryRun` outputs plan to stderr
+- `.gitignore` — fixed `coverage.*` glob that was incorrectly matching `internal/report/coverage.go`
 
 ### Exit Criteria
 

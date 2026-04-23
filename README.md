@@ -16,6 +16,7 @@ Current repository scope:
 - `internal/seed` — generates request candidates from inventory metadata and operator hints; persists successful requests as seeds
 - `internal/executor` — executes inventory-backed REST, GraphQL, and unary gRPC requests; writes evidence bundles with coverage diagnostics
 - `internal/rules` — rule engine with 24 security rules across REST, GraphQL, and gRPC; stateful authorization checks via `--stateful`
+- `internal/report` — SARIF 2.1.0 output, coverage summary JSON, and human-readable stderr summary
 
 Current runtime limits:
 
@@ -181,6 +182,12 @@ scan:
   retries: 1
   rate_limit: 5
   max_response_bytes: 65536
+  # Restrict scanning to approved hostnames. Supports wildcards (*.example.com).
+  # When set, any target whose host is not in this list is rejected before
+  # any requests are sent.
+  target_allowlist:
+    - api.together.ai
+    - api.together.xyz
 
 # Operator-provided seed values (optional).
 # path_params and query_params are matched by exact parameter name.
@@ -195,14 +202,8 @@ resource_hints:
 output:
   seed_store_path: seeds.json
   findings_path: findings.json
-
-# Restrict scanning to approved hostnames. Supports wildcards (*.example.com).
-# When set, any target whose host is not in this list is rejected before
-# any requests are sent.
-scan:
-  target_allowlist:
-    - api.together.ai
-    - api.together.xyz
+  sarif_path: findings.sarif
+  coverage_path: coverage.json
 ```
 
 A full production config template is available at [`spekto.example.yaml`](spekto.example.yaml).
