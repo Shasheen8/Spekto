@@ -51,6 +51,7 @@ func StatefulScan(ctx context.Context, seeds []executor.Result, registry auth.Re
 	probed := map[string]bool{}
 	budget := maxProbes
 
+outer:
 	for _, seed := range seeds {
 		if seed.Status != "succeeded" || seed.Protocol != inventory.ProtocolREST {
 			continue
@@ -69,11 +70,14 @@ func StatefulScan(ctx context.Context, seeds []executor.Result, registry auth.Re
 		}
 
 		for _, altCtx := range registry.Contexts {
+			if budget <= 0 {
+				break outer
+			}
 			if altCtx.Name == seed.AuthContextName {
 				continue
 			}
 			key := seed.OperationID + ":" + altCtx.Name
-			if probed[key] || budget <= 0 {
+			if probed[key] {
 				continue
 			}
 			probed[key] = true

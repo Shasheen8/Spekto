@@ -411,6 +411,9 @@ func runScan(args []string) error {
 	if strings.TrimSpace(inventoryPath) == "" {
 		return fmt.Errorf("scan requires --inventory")
 	}
+	if allowWriteStateful && !stateful {
+		return fmt.Errorf("--allow-write-stateful requires --stateful")
+	}
 
 	cfg, err := config.LoadFile(configPath)
 	if err != nil {
