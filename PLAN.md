@@ -21,6 +21,7 @@
 | 7 | Stateful authorization — BOLA001, BFLA001 | ✅ Complete |
 | 8 | Reporting, coverage, operator UX | ✅ Complete |
 | 9 | Validation and hardening | ✅ Complete |
+| 10 | Injection, TLS, and disclosure rules | ⬜ Not started |
 
 ## Objective
 
@@ -1340,6 +1341,126 @@ Validate the scanner, then make it safe enough for recurring production use.
 - [x] repeatable scans in GitHub Actions (workflow file shipped)
 - [x] stable artifacts and policy gates (allowlist + dry-run)
 - [x] documented safe rollout path for Together production (`spekto.example.yaml`)
+
+## Phase 10: Injection, TLS, and Disclosure Rules
+
+### Status
+
+- [ ] Phase 10 not started
+
+### Goal
+
+Close the gap between Spekto's current rule set and the full API issue taxonomy.
+Phases 0–9 cover authentication, JWT, HTTP misconfiguration, GraphQL, gRPC, and
+stateful authorization. This phase adds injection, TLS, server error, credential,
+and disclosure checks so the tool covers the complete set of API security issues.
+
+### Current coverage (24 rules — phases 0–9)
+
+| Category | Rules |
+|---|---|
+| Authentication | AUTH001 bypass, AUTH002 invalid token |
+| JWT | JWT001–006 (alg=none, null sig, blank/weak secret, KID injection, corrupted sig) |
+| HTTP misconfiguration | HDR001–005 (security headers, CORS, TRACE/TRACK, method override, IP bypass) |
+| Parameter / body | PARAM001 privilege escalation, BODY001 mass assignment |
+| GraphQL | GQL001–003 (introspection, auth bypass, batch abuse) |
+| gRPC | GRPC001–004 (unauth access, invalid metadata, reflection exposed, error leakage) |
+| Stateful authz | BOLA001 object-level auth, BFLA001 function-level auth |
+
+### Gap analysis (from API issue taxonomy)
+
+| Issue | Current | Phase 10 target |
+|---|---|---|
+| Auth Bypass | ✅ AUTH001/002, GQL002, GRPC001 | — |
+| Verb Tampering | ✅ HDR004 | — |
+| Internal Server Error | ⚠️ GRPC004 only | INJ001 (REST/GraphQL 5xx) |
+| SQL Injection | ❌ | INJ002 |
+| NoSQL Injection | ❌ | INJ003 |
+| Command Injection | ❌ | INJ004 |
+| Path Traversal | ❌ | INJ005 |
+| SSRF | ❌ | INJ006 |
+| Default Credentials | ❌ | SEC001 |
+| Server Crash | ❌ | SEC002 |
+| PII / Sensitive Data Disclosure | ❌ | SEC003 |
+| Timeout (resource exhaustion) | ❌ | SEC004 |
+| TLS Algorithm Downgrade | ❌ | TLS001 |
+| TLS Broken/Risky Crypto | ❌ | TLS002 |
+| TLS Expired Key Usage | ❌ | TLS003 |
+| TLS Improper Chain of Trust | ❌ | TLS004 |
+| XSS in API responses | deferred | low priority for JSON APIs |
+| Invalid Request/Response Spec | deferred | requires schema validation engine |
+| Custom plugin / classifier | deferred | architecture work |
+
+### Tasks
+
+#### 10.1 — Injection rules (INJ001–006)
+
+All injection rules follow the same pattern: take each successful seed, mutate
+path params, query params, and JSON body fields with payloads, and detect
+indicators in responses.
+
+- [ ] **INJ001: Server error on mutation** — flag when a seed mutation (any rule
+  probe) returns 5xx; signals a crash or unhandled exception
+- [ ] **INJ002: SQL injection** — send common SQL payloads (`' OR '1'='1`,
+  `1; DROP TABLE`, error-based probes); detect SQL error strings in responses
+- [ ] **INJ003: NoSQL injection** — send NoSQL operator payloads
+  (`{"$gt":""}`, `{"$where":"1==1"}`); detect unexpected 2xx or data exposure
+- [ ] **INJ004: Command injection** — send command payloads (`; id`, `| whoami`,
+  `` `sleep 5` ``); detect command output patterns or response-time anomalies
+- [ ] **INJ005: Path traversal** — send `../../etc/passwd` and URL-encoded
+  variants in path and query params; detect file content patterns in responses
+- [ ] **INJ006: SSRF** — inject internal addresses (`http://169.254.169.254/`,
+  `http://localhost`, RFC-1918 ranges) as URL-typed parameter values; detect
+  cloud metadata content or unexpected 2xx from internal origins
+
+#### 10.2 — Security / disclosure rules (SEC001–004)
+
+- [ ] **SEC001: Default credentials** — try common credential pairs
+  (`admin:admin`, `test:test`, `user:user`, empty password) against auth
+  endpoints identified in the inventory
+- [ ] **SEC002: Server crash** — structured 500-detection: flag any operation
+  where a rule probe returns 5xx when the seed returned 2xx, with response body
+  analysed for stack trace or crash indicators
+- [ ] **SEC003: PII / sensitive data disclosure** — scan successful seed
+  responses for regex patterns: credit card numbers, SSNs, private key headers
+  (`-----BEGIN RSA`), embedded JWTs, email addresses in contexts that suggest
+  leakage
+- [ ] **SEC004: Timeout / resource exhaustion** — probe with deeply nested JSON
+  payloads, long strings, and regex-triggering inputs; flag when response time
+  exceeds a configurable threshold (default 10×seed baseline)
+
+#### 10.3 — TLS rules (TLS001–004)
+
+TLS rules inspect the raw TLS handshake using `crypto/tls` directly; they do
+not send HTTP requests. Probed once per unique HTTPS host per scan.
+
+- [ ] **TLS001: Weak TLS version** — detect TLS 1.0 or 1.1 (server accepts
+  handshake below TLS 1.2)
+- [ ] **TLS002: Broken or risky cipher suite** — detect export-grade ciphers,
+  NULL ciphers, RC4, DES, 3DES, or anonymous key exchange in the negotiated
+  cipher suite
+- [ ] **TLS003: Expired certificate** — flag when `Certificate.NotAfter` is in
+  the past
+- [ ] **TLS004: Invalid certificate chain** — flag when the server certificate
+  fails `x509.CertPool` verification against the system root store
+
+### Implementation Notes (planned)
+
+- Injection rules reuse the existing `Probe / Evaluate` pattern in `rules/`
+- Payload lists will be embedded as package-level `var` slices — no external files
+- TLS probes need a new `rules.TLSScan` orchestrator (similar to `GRPCScan`) since
+  they operate at the TLS layer, not HTTP
+- SEC003 PII patterns will be compiled `regexp.MustCompile` at package init
+- SEC004 timing probes require capturing the seed's baseline response time from
+  `Result.Duration` before comparing probe response time
+- All injection rules apply only to REST seeds; GraphQL injection deferred
+
+### Exit Criteria
+
+- [ ] SQL, NoSQL, command, path traversal, and SSRF injection checks implemented
+- [ ] TLS four-check suite implemented
+- [ ] Default credentials, server crash, PII disclosure, and timeout implemented
+- [ ] Full API issue taxonomy covered (excluding XSS, spec validation, and plugin system)
 
 ## GitHub Actions Rollout Plan
 
