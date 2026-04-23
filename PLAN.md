@@ -1326,8 +1326,14 @@ Validate the scanner, then make it safe enough for recurring production use.
 
 - `internal/config/config.go` — `ScanPolicy.TargetAllowlist []string`
 - `internal/executor/scan.go` — `validateTargetAllowlist`, `targetHost`, `hostAllowed`; checked before scan begins
-- `cmd/spekto/main.go` — `--dry-run`, `--stateful`, `--allow-write-stateful` guards; `printDryRun` outputs plan to stderr
+- `cmd/spekto/main.go` — `--dry-run`, `--stateful`, `--allow-write-stateful` guards; `printDryRun` outputs plan to stderr; `writeFile` helper enforces 0600 on existing files via remove-then-write
 - `.gitignore` — fixed `coverage.*` glob that was incorrectly matching `internal/report/coverage.go`
+
+### Post-completion holistic audit fixes
+
+- `internal/executor/http.go` — removed dead `lastError` variable and unreachable post-loop block; loop always exits via `return result` on the final attempt
+- `internal/auth/context.go` — `RedactURL` now strips URL userinfo (`user:pass@host`) before handling API key query params; previously only query params were redacted
+- `cmd/spekto/main.go`, `internal/seed/store.go` — all output file writes now use `os.Remove` before `os.WriteFile` to enforce 0600 permissions even when the file already exists with weaker permissions
 
 ### Exit Criteria
 
