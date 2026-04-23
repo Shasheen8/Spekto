@@ -20,6 +20,7 @@ import (
 	graphqldiscovery "github.com/Shasheen8/Spekto/internal/protocol/graphql"
 	grpcdiscovery "github.com/Shasheen8/Spekto/internal/protocol/grpc"
 	restdiscovery "github.com/Shasheen8/Spekto/internal/protocol/rest"
+	"github.com/Shasheen8/Spekto/internal/report"
 	"github.com/Shasheen8/Spekto/internal/rules"
 	"github.com/Shasheen8/Spekto/internal/seed"
 )
@@ -370,6 +371,8 @@ func runScan(args []string) error {
 	var inventoryPath string
 	var outPath string
 	var findingsPath string
+	var sarifPath string
+	var coveragePath string
 	var seedStorePath string
 	var noRules bool
 	var dryRun bool
@@ -389,6 +392,8 @@ func runScan(args []string) error {
 	fs.StringVar(&inventoryPath, "inventory", "", "Canonical inventory JSON file path")
 	fs.StringVar(&outPath, "out", "", "Output path for evidence bundle JSON")
 	fs.StringVar(&findingsPath, "findings-out", "", "Output path for findings JSON (default: prints to stdout when findings exist)")
+	fs.StringVar(&sarifPath, "sarif-out", "", "Output path for SARIF findings (for GitHub Advanced Security)")
+	fs.StringVar(&coveragePath, "coverage-out", "", "Output path for coverage summary JSON")
 	fs.StringVar(&seedStorePath, "seed-store", "", "Path to seed store JSON file (captures successful requests)")
 	fs.BoolVar(&noRules, "no-rules", false, "Skip rule-based scanning after seeding")
 	fs.BoolVar(&dryRun, "dry-run", false, "Print what would be scanned without sending any requests")
@@ -526,10 +531,30 @@ func runScan(args []string) error {
 		findings = append(findings, statefulFindings...)
 	}
 
+	// Human-readable summary always goes to stderr.
+	report.PrintSummary(os.Stderr, bundle, findings)
+
+	// Coverage summary JSON (flag > config).
+	covPath := strings.TrimSpace(coveragePath)
+	if covPath == "" {
+		covPath = strings.TrimSpace(cfg.Output.CoveragePath)
+	}
+	if covPath != "" {
+		cov := report.BuildCoverageSummary(bundle)
+		covData, err := cov.JSON()
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(covPath, append(covData, '\n'), 0o600); err != nil {
+			return err
+		}
+	}
+
 	if len(findings) == 0 {
 		return nil
 	}
 
+	// Findings JSON (flag > config).
 	fs2 := rules.FindingSet{
 		Findings: findings,
 		Summary:  rules.Summarize(findings),
@@ -545,22 +570,31 @@ func runScan(args []string) error {
 		fPath = strings.TrimSpace(cfg.Output.FindingsPath)
 	}
 	if fPath != "" {
-		return os.WriteFile(fPath, findingsData, 0o600)
-	}
-	// When the bundle went to stdout, print a summary to stderr rather than
-	// corrupting stdout with a second JSON document. The operator should use
-	// --findings-out to persist findings.
-	if bundleToStdout {
-		summary := rules.Summarize(findings)
-		fmt.Fprintf(os.Stderr, "findings: %d total", summary.Total)
-		for sev, count := range summary.BySeverity {
-			fmt.Fprintf(os.Stderr, " | %s: %d", sev, count)
+		if err := os.WriteFile(fPath, findingsData, 0o600); err != nil {
+			return err
 		}
-		fmt.Fprintln(os.Stderr, " (use --findings-out to save)")
-		return nil
+	} else if !bundleToStdout {
+		if _, err = os.Stdout.Write(findingsData); err != nil {
+			return err
+		}
 	}
-	_, err = os.Stdout.Write(findingsData)
-	return err
+
+	// SARIF (flag > config).
+	sPath := strings.TrimSpace(sarifPath)
+	if sPath == "" {
+		sPath = strings.TrimSpace(cfg.Output.SARIFPath)
+	}
+	if sPath != "" {
+		sarifData, err := report.SARIF(findings)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(sPath, append(sarifData, '\n'), 0o600); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, timeout time.Duration, followRedirects triStateBool) {

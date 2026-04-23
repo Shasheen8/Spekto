@@ -137,6 +137,8 @@ Flags:
 - `--no-rules` — skip rule-based scanning after seeding
 - `--stateful` — enable stateful authorization checks (BOLA001, BFLA001); requires ≥2 auth contexts
 - `--allow-write-stateful` — include mutating methods in stateful checks (use with caution)
+- `--sarif-out` — output path for SARIF findings (for GitHub Advanced Security)
+- `--coverage-out` — output path for coverage summary JSON
 - `--dry-run` — print what would be scanned without sending any requests
 - `--out`
 
@@ -295,7 +297,13 @@ protocol-specific metadata, and derived signals (`specified_but_unseen`,
 - remediation guidance
 - summary by severity and rule
 
+A human-readable summary is always printed to stderr after a scan showing coverage %, per-protocol counts, findings by severity, and schema gap hints.
+
 When `--seed-store` is set, successful requests are persisted keyed by (operation, auth context). The store is additive — re-running a scan updates only records that succeed.
+
+**Coverage summary** (`--coverage-out`) contains per-protocol and per-auth-context breakdowns and a deduplicated schema gap list.
+
+**SARIF** (`--sarif-out`) is a SARIF 2.1.0 document accepted by GitHub Advanced Security for display in the Security tab. Upload it as a code-scanning artifact from the GHA workflow.
 
 ## Safety Defaults
 

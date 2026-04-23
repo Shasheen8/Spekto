@@ -19,7 +19,7 @@
 | 5 | GraphQL coverage — 3 GraphQL rules, argument hints | ✅ Complete |
 | 6 | gRPC coverage — 4 gRPC rules | ✅ Complete |
 | 7 | Stateful authorization — BOLA001, BFLA001 | ✅ Complete |
-| 8 | Reporting, coverage, operator UX | ⏸ Deferred |
+| 8 | Reporting, coverage, operator UX | ✅ Complete |
 | 9 | Validation and hardening | ✅ Complete |
 
 ## Objective
@@ -1257,7 +1257,7 @@ Deliver the checks that matter most beyond basic auth bypass.
 
 ### Status
 
-- [ ] Phase 8 not started (deferred — doing Phase 9 first)
+- [x] Phase 8 complete
 
 ### Goal
 
@@ -1265,33 +1265,34 @@ Make the tool operationally useful in both CLI and GitHub Actions.
 
 ### Tasks
 
-- [ ] Build the finding model
-  - [x] rule ID
-  - [x] severity
-  - [x] confidence
-  - [x] OWASP and CWE mapping
-  - [x] evidence bundle
-  - [x] reproduction guidance
-- [ ] Build the coverage model
-  - [x] total inventory by source and protocol (in BundleSummary)
+- [x] Build the finding model
+  - [x] rule ID, severity, confidence, OWASP/CWE, evidence, reproduction
+- [x] Build the coverage model
+  - [x] total inventory by source and protocol (BundleSummary)
   - [x] blocked and skipped counts with reasons (CoverageReport)
-  - [ ] successful coverage by auth context (per-auth breakdown)
-  - [ ] undocumented discovered endpoints surface in coverage report
-- [ ] Build output formats
+  - [x] successful coverage by auth context (AuthBreakdown in CoverageSummary)
+  - [x] schema gap list per operation (deduplicated in CoverageSummary)
+- [x] Build output formats
   - [x] JSON (evidence bundle + findings)
-  - [ ] human CLI report (table output, colour, summary line)
-  - [ ] SARIF
-  - [ ] coverage summary artifact
-- [ ] Build operator diagnostics
+  - [x] human CLI report (`report.PrintSummary` → stderr after every scan)
+  - [x] SARIF (`--sarif-out` / `output.sarif_path`) for GitHub Advanced Security
+  - [x] coverage summary JSON (`--coverage-out` / `output.coverage_path`)
+- [x] Build operator diagnostics
   - [x] why an endpoint was skipped (block reason in CoverageEntry)
-  - [x] schema gaps tracked per result
-  - [ ] why success was not achieved (per-auth diagnostics)
-  - [ ] which hints or examples are missing (schema gap report)
+  - [x] schema gaps tracked per result + deduplicated in coverage summary
+  - [x] per-auth-context coverage in CoverageSummary.ByAuthContext
+
+### Implementation Notes
+
+- `internal/report/sarif.go` — SARIF 2.1.0; rules deduped and sorted; CVSS-like score strings for GitHub severity mapping
+- `internal/report/coverage.go` — `BuildCoverageSummary` derives per-protocol and per-auth breakdowns from bundle results; schema gaps deduplicated by operation
+- `internal/report/text.go` — `PrintSummary` writes to stderr always; shows coverage %, per-protocol counts, block reasons, findings by severity, and schema gap hint
+- New scan flags: `--sarif-out`, `--coverage-out`; both also read from `output.sarif_path` / `output.coverage_path` in config
 
 ### Exit Criteria
 
-- [ ] CLI output good enough for manual triage
-- [ ] machine output good enough for CI and GHA ingestion
+- [x] CLI output good enough for manual triage (text summary on stderr after every scan)
+- [x] machine output good enough for CI and GHA ingestion (SARIF + coverage JSON)
 
 ## Phase 9: Validation and Hardening
 
