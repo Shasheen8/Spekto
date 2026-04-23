@@ -27,20 +27,20 @@ func PrintSummary(w io.Writer, bundle executor.Bundle, findings []rules.Finding)
 	}
 	fmt.Fprintf(w, "Coverage  %d/%d operations seeded (%.0f%%)\n", s.Succeeded, s.Total, pct)
 
-	// Per-protocol breakdown.
+	// Per-protocol breakdown — build succeeded counts in one pass.
+	succByProto := make(map[string]int, len(s.ByProtocol))
+	for _, r := range bundle.Results {
+		if r.Status == "succeeded" {
+			succByProto[string(r.Protocol)]++
+		}
+	}
 	protos := make([]string, 0, len(s.ByProtocol))
 	for p := range s.ByProtocol {
 		protos = append(protos, p)
 	}
 	sort.Strings(protos)
 	for _, proto := range protos {
-		succForProto := 0
-		for _, r := range bundle.Results {
-			if string(r.Protocol) == proto && r.Status == "succeeded" {
-				succForProto++
-			}
-		}
-		fmt.Fprintf(w, "  %-9s %d/%d\n", proto+":", succForProto, s.ByProtocol[proto])
+		fmt.Fprintf(w, "  %-9s %d/%d\n", proto+":", succByProto[proto], s.ByProtocol[proto])
 	}
 
 	// Block reasons.
@@ -83,8 +83,9 @@ func PrintSummary(w io.Writer, bundle executor.Bundle, findings []rules.Finding)
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	return string(runes[:max-1]) + "…"
 }
