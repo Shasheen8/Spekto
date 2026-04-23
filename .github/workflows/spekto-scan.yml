@@ -40,26 +40,32 @@ jobs:
       - name: Build Spekto
         run: go build -o spekto ./cmd/spekto
 
+      - name: Discover inventory
+        # Generates inventory.json from a committed OpenAPI spec.
+        # Skip this step if you commit inventory.json directly to the repo.
+        if: ${{ vars.SPEKTO_OPENAPI_PATH != '' }}
+        run: ./spekto discover spec --openapi "$OPENAPI_PATH" --out inventory.json
+        env:
+          OPENAPI_PATH: ${{ vars.SPEKTO_OPENAPI_PATH }}
+
       - name: Dry run (validate config and inventory)
         run: ./spekto scan --config spekto.yaml --inventory inventory.json --dry-run
-        continue-on-error: true
 
       - name: Run scan
+        # Dispatch inputs are read through env vars to prevent shell injection.
         env:
-          # Inject bearer tokens from repository secrets.
-          # Reference via bearer_token_env in spekto.yaml.
           PROD_BEARER_TOKEN: ${{ secrets.PROD_BEARER_TOKEN }}
-          # Dispatch inputs via env to prevent command injection.
           SCAN_TARGET: ${{ github.event.inputs.target }}
           SCAN_OPERATION: ${{ github.event.inputs.operation }}
           SCAN_NO_RULES: ${{ github.event.inputs.no_rules }}
         run: |
-          ARGS="scan --config spekto.yaml --inventory inventory.json"
-          ARGS="$ARGS --seed-store seeds.json --findings-out findings.json --out evidence.json"
-          [ -n "$SCAN_TARGET" ]    && ARGS="$ARGS --target    $SCAN_TARGET"
-          [ -n "$SCAN_OPERATION" ] && ARGS="$ARGS --operation $SCAN_OPERATION"
-          [ "$SCAN_NO_RULES" = "true" ] && ARGS="$ARGS --no-rules"
-          ./spekto $ARGS
+          set -euo pipefail
+          ARGS=(scan --config spekto.yaml --inventory inventory.json)
+          ARGS+=(--seed-store seeds.json --findings-out findings.json --out evidence.json)
+          [ -n "$SCAN_TARGET" ]    && ARGS+=(--target    "$SCAN_TARGET")
+          [ -n "$SCAN_OPERATION" ] && ARGS+=(--operation "$SCAN_OPERATION")
+          [ "$SCAN_NO_RULES" = "true" ] && ARGS+=(--no-rules)
+          ./spekto "${ARGS[@]}"
 
       - name: Upload scan artifacts
         uses: actions/upload-artifact@v4

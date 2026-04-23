@@ -432,7 +432,7 @@ func runScan(args []string) error {
 	}
 
 	if dryRun {
-		return printDryRun(cfg, inv, includeTargets, excludeTargets, includeOperations, includeTags, stateful)
+		return printDryRun(cfg, inv, includeTargets, excludeTargets, stateful)
 	}
 
 	// Build and resolve the auth registry once so both the seed scan and rule
@@ -613,7 +613,7 @@ func (b *triStateBool) Set(value string) error {
 }
 
 // printDryRun prints what would be scanned without executing any requests.
-func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, excludeTargets, includeOperations, includeTags []string, stateful bool) error {
+func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, excludeTargets []string, stateful bool) error {
 	fmt.Fprintln(os.Stderr, "Spekto dry run — no requests will be sent")
 
 	targets, err := cfg.SelectTargetsFiltered(includeTargets, excludeTargets)
@@ -636,19 +636,19 @@ func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, exc
 			fmt.Fprintf(os.Stderr, "  ... and %d more\n", inv.Summary.Total-shown)
 			break
 		}
-		auth := string(op.AuthHints.RequiresAuth)
-		gaps := ""
+		authReq := string(op.AuthHints.RequiresAuth)
+		signals := ""
 		if len(op.Signals) > 0 {
-			gaps = "  signals=" + strings.Join(op.Signals, ",")
+			signals = "  signals=" + strings.Join(op.Signals, ",")
 		}
 		fmt.Fprintf(os.Stderr, "  %-8s  %-50s  conf=%.2f  auth=%s%s\n",
-			op.Protocol, op.Locator, op.Confidence, auth, gaps)
+			op.Protocol, op.Locator, op.Confidence, authReq, signals)
 		shown++
 	}
 
 	fmt.Fprintf(os.Stderr, "\nAuth contexts (%d):\n", len(cfg.AuthContexts))
 	for _, a := range cfg.AuthContexts {
-		schemes := []string{}
+		var schemes []string
 		if a.BearerToken != "" || a.BearerTokenEnv != "" {
 			schemes = append(schemes, "bearer")
 		}
@@ -672,7 +672,7 @@ func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, exc
 	if stateful {
 		statefulNote = "enabled"
 	}
-	fmt.Fprintf(os.Stderr, "\nRules: 24 active  Stateful: %s\n", statefulNote)
+	fmt.Fprintf(os.Stderr, "\nRules: %d stateless  Stateful: %s\n", len(rules.DefaultRules()), statefulNote)
 
 	if len(cfg.Scan.TargetAllowlist) > 0 {
 		fmt.Fprintf(os.Stderr, "Allowlist: %s\n", strings.Join(cfg.Scan.TargetAllowlist, ", "))
