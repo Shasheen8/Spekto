@@ -978,9 +978,9 @@ and coverage accounting across all traffic sources.
 
 ### Exit Criteria
 
-- one merged inventory report
-- one stable inventory serialization format
-- one dedupe strategy that works across multiple sources
+- [x] one merged inventory report
+- [x] one stable inventory serialization format
+- [x] one dedupe strategy that works across multiple sources
 
 ## Phase 2: Auth, Sessions, and Execution Core
 
@@ -1255,39 +1255,43 @@ Deliver the checks that matter most beyond basic auth bypass.
 
 ## Phase 8: Reporting, Coverage, and Operator UX
 
+### Status
+
+- [ ] Phase 8 not started (deferred — doing Phase 9 first)
+
 ### Goal
 
 Make the tool operationally useful in both CLI and GitHub Actions.
 
 ### Tasks
 
-- Build the finding model
-  - rule ID
-  - severity
-  - confidence
-  - OWASP and CWE mapping
-  - evidence bundle
-  - reproduction guidance
-- Build the coverage model
-  - total inventory by source and protocol
-  - successful coverage by auth context
-  - blocked and skipped counts with reasons
-  - undocumented discovered endpoints
-- Build output formats
-  - human CLI report
-  - JSON
-  - SARIF
-  - coverage summary
-- Build operator diagnostics
-  - why an endpoint was skipped
-  - why success was not achieved
-  - which auth context failed
-  - which hints or examples are missing
+- [ ] Build the finding model
+  - [x] rule ID
+  - [x] severity
+  - [x] confidence
+  - [x] OWASP and CWE mapping
+  - [x] evidence bundle
+  - [x] reproduction guidance
+- [ ] Build the coverage model
+  - [x] total inventory by source and protocol (in BundleSummary)
+  - [x] blocked and skipped counts with reasons (CoverageReport)
+  - [ ] successful coverage by auth context (per-auth breakdown)
+  - [ ] undocumented discovered endpoints surface in coverage report
+- [ ] Build output formats
+  - [x] JSON (evidence bundle + findings)
+  - [ ] human CLI report (table output, colour, summary line)
+  - [ ] SARIF
+  - [ ] coverage summary artifact
+- [ ] Build operator diagnostics
+  - [x] why an endpoint was skipped (block reason in CoverageEntry)
+  - [x] schema gaps tracked per result
+  - [ ] why success was not achieved (per-auth diagnostics)
+  - [ ] which hints or examples are missing (schema gap report)
 
 ### Exit Criteria
 
-- CLI output good enough for manual triage
-- machine output good enough for CI and GHA ingestion
+- [ ] CLI output good enough for manual triage
+- [ ] machine output good enough for CI and GHA ingestion
 
 ## Phase 9: Validation and Hardening
 
