@@ -27,5 +27,17 @@ func DefaultRules() []Rule {
 		&GraphQLIntrospectionEnabled{},
 		&GraphQLAuthBypass{},
 		&GraphQLBatchAbuse{},
+		// Injection
+		&ServerErrorOnInput{},
+		&SQLInjection{},
+		&NoSQLInjection{},
+		&CommandInjection{},
+		&PathTraversal{},
+		&SSRFProbe{},
+		// Security / disclosure
+		&DefaultCredentials{},
+		&ServerCrash{},
+		&PIIDisclosure{},
+		&ResourceExhaustion{},
 	}
 }

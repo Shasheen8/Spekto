@@ -521,6 +521,12 @@ func runScan(args []string) error {
 	}
 	findings = append(findings, grpcFindings...)
 
+	tlsFindings, err := rules.TLSScan(context.Background(), bundle.Results, policy)
+	if err != nil {
+		return err
+	}
+	findings = append(findings, tlsFindings...)
+
 	if stateful {
 		statefulFindings, err := rules.StatefulScan(context.Background(), bundle.Results, registry, policy, rules.StatefulOptions{
 			AllowWriteChecks: allowWriteStateful,

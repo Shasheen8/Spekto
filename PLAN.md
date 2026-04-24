@@ -21,7 +21,7 @@
 | 7 | Stateful authorization — BOLA001, BFLA001 | ✅ Complete |
 | 8 | Reporting, coverage, operator UX | ✅ Complete |
 | 9 | Validation and hardening | ✅ Complete |
-| 10 | Injection, TLS, and disclosure rules | ⬜ Not started |
+| 10 | Injection, TLS, and disclosure rules | ✅ Complete |
 
 ## Objective
 
@@ -1346,7 +1346,7 @@ Validate the scanner, then make it safe enough for recurring production use.
 
 ### Status
 
-- [ ] Phase 10 not started
+- [x] Phase 10 complete
 
 ### Goal
 
@@ -1455,12 +1455,24 @@ not send HTTP requests. Probed once per unique HTTPS host per scan.
   `Result.Duration` before comparing probe response time
 - All injection rules apply only to REST seeds; GraphQL injection deferred
 
+### Implementation Notes
+
+- `internal/rules/injection.go` — shared `injectionProbes` helper (path/query/body); INJ001–006
+- `internal/rules/disclosure.go` — SEC001–004; PII patterns compiled at package init; `buildNestedJSON` shared by SEC002 and SEC004
+- `internal/rules/tls.go` — `TLSScan` orchestrator (deduplicates per HTTPS host); TLS001–004 via `crypto/tls`; riskyCipherSuites map with hex IDs for constants Go does not expose
+- Probe cap raised from 50 → 100 per seed to accommodate injection probes alongside existing rules
+- Injection rules apply to REST only; SSRF and traversal probe path and query params; NoSQL and server-error probes apply to write methods only
+- SEC001 (default credentials) applies to basic-auth seeds; builds Authorization header directly without registry lookup
+- SEC003 (PII) is static — no probe sent; one finding per operation to avoid flooding
+- TLS001 uses `InsecureSkipVerify: true` intentionally to test server version capability regardless of certificate validity
+- `TLSScan` called from `main.go` after `GRPCScan`, results merged into the same findings slice
+
 ### Exit Criteria
 
-- [ ] SQL, NoSQL, command, path traversal, and SSRF injection checks implemented
-- [ ] TLS four-check suite implemented
-- [ ] Default credentials, server crash, PII disclosure, and timeout implemented
-- [ ] Full API issue taxonomy covered (excluding XSS, spec validation, and plugin system)
+- [x] SQL, NoSQL, command, path traversal, and SSRF injection checks implemented
+- [x] TLS four-check suite implemented
+- [x] Default credentials, server crash, PII disclosure, and timeout implemented
+- [x] Full API issue taxonomy covered (excluding XSS, spec validation, and plugin system)
 
 ## GitHub Actions Rollout Plan
 

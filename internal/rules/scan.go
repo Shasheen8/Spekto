@@ -25,7 +25,7 @@ func Scan(ctx context.Context, seeds []executor.Result, registry auth.Registry, 
 	}
 	maxProbes := opts.MaxProbesPerSeed
 	if maxProbes <= 0 {
-		maxProbes = 50
+		maxProbes = 100
 	}
 
 	client := &http.Client{

@@ -15,7 +15,7 @@ Current repository scope:
 - `internal/inventory` — merges spec, traffic, active, and manual sources into one canonical inventory; normalizes dynamic path segments from observed traffic
 - `internal/seed` — generates request candidates from inventory metadata and operator hints; persists successful requests as seeds
 - `internal/executor` — executes inventory-backed REST, GraphQL, and unary gRPC requests; writes evidence bundles with coverage diagnostics
-- `internal/rules` — rule engine with 24 security rules across REST, GraphQL, and gRPC; stateful authorization checks via `--stateful`
+- `internal/rules` — rule engine with 38 security rules across REST, GraphQL, and gRPC; injection, TLS, and disclosure checks; stateful authorization via `--stateful`
 - `internal/report` — SARIF 2.1.0 output, coverage summary JSON, and human-readable stderr summary
 
 Current runtime limits:
@@ -258,6 +258,20 @@ Before a production scan, use `--dry-run` to verify configuration without sendin
 | GRPC004 | gRPC error response leaks internal details | gRPC only |
 | BOLA001 | Broken Object Level Authorization (cross-context read) | REST (`--stateful`) |
 | BFLA001 | Broken Function Level Authorization (cross-context write) | REST (`--stateful --allow-write-stateful`) |
+| INJ001 | Server error on null/invalid input | REST |
+| INJ002 | SQL injection | REST |
+| INJ003 | NoSQL injection | REST |
+| INJ004 | Command injection | REST |
+| INJ005 | Path traversal | REST |
+| INJ006 | SSRF | REST |
+| SEC001 | Default credentials | REST (basic auth) |
+| SEC002 | Server crash on malformed input | REST |
+| SEC003 | PII / sensitive data disclosure | REST, GraphQL |
+| SEC004 | Resource exhaustion / algorithmic complexity | REST |
+| TLS001 | Weak TLS version (1.0 or 1.1) | HTTPS endpoints |
+| TLS002 | Broken or risky cipher suite | HTTPS endpoints |
+| TLS003 | Expired TLS certificate | HTTPS endpoints |
+| TLS004 | Invalid TLS certificate chain | HTTPS endpoints |
 
 ## Inputs
 
