@@ -1459,13 +1459,18 @@ not send HTTP requests. Probed once per unique HTTPS host per scan.
 
 - `internal/rules/injection.go` — shared `injectionProbes` helper (path/query/body); INJ001–006
 - `internal/rules/disclosure.go` — SEC001–004; PII patterns compiled at package init; `buildNestedJSON` shared by SEC002 and SEC004
-- `internal/rules/tls.go` — `TLSScan` orchestrator (deduplicates per HTTPS host); TLS001–004 via `crypto/tls`; riskyCipherSuites map with hex IDs for constants Go does not expose
+- `internal/rules/tls.go` — `TLSScan` orchestrator (deduplicates per HTTPS host); TLS001–004 via `crypto/tls`; riskyCipherSuites map with hex IDs for constants Go does not expose; `errors.As` used for x509 error classification
 - Probe cap raised from 50 → 100 per seed to accommodate injection probes alongside existing rules
-- Injection rules apply to REST only; SSRF and traversal probe path and query params; NoSQL and server-error probes apply to write methods only
+- INJ004 payload changed to `; id` (outputs `uid=`/`gid=` which are in cmdOutputIndicators)
+- INJ005 path-param injection skipped — `url.PathEscape` encodes `/` as `%2F` making traversal ineffective; only query and body params are probed
+- INJ003 (NoSQL) guards that at least one string field was modified before creating probe — prevents sending unmodified body
 - SEC001 (default credentials) applies to basic-auth seeds; builds Authorization header directly without registry lookup
 - SEC003 (PII) is static — no probe sent; one finding per operation to avoid flooding
+- TLS003 vs TLS004 classified with `errors.As` checking `x509.CertificateInvalidError.Reason == x509.Expired` first, preventing expired certs from being misclassified as invalid chain
+- TLS dialer deadline set from context — previously `dialCtx` was created but never applied; connections could hang indefinitely
 - TLS001 uses `InsecureSkipVerify: true` intentionally to test server version capability regardless of certificate validity
 - `TLSScan` called from `main.go` after `GRPCScan`, results merged into the same findings slice
+- Removed unused `isCertError` generic function and `strings` import from `tls.go`
 
 ### Exit Criteria
 

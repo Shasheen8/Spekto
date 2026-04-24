@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/Shasheen8/Spekto/internal/executor"
@@ -74,31 +74,28 @@ func tlsCheckHost(ctx context.Context, host, addr string, seed executor.Result, 
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// Apply the context deadline to the dialer so connections to unreachable
+	// hosts do not hang indefinitely.
 	dialer := &net.Dialer{}
+	if deadline, ok := dialCtx.Deadline(); ok {
+		dialer.Deadline = deadline
+	}
+
 	var findings []Finding
 
-	// TLS003 & TLS004: connect with default verification to check certificate.
-	// Use InsecureSkipVerify=false so x509 errors are surfaced.
+	// TLS003 & TLS004: connect with standard verification so x509 errors surface.
 	conn403, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
 		ServerName: host,
 		MinVersion: tls.VersionTLS12,
 	})
 	if err != nil {
-		// TLS004: certificate chain or hostname verification failed.
-		var certErr x509.CertificateInvalidError
-		var unknownErr x509.UnknownAuthorityError
-		var hostErr x509.HostnameError
-		errStr := strings.ToLower(err.Error())
+		// Expired certificate must be classified as TLS003 before checking for
+		// other chain errors (x509.CertificateInvalidError covers both).
+		var certInvalid x509.CertificateInvalidError
+		var unknownAuth x509.UnknownAuthorityError
+		var hostMismatch x509.HostnameError
 		switch {
-		case isCertError(err, &certErr) || isCertError(err, &unknownErr) || isCertError(err, &hostErr):
-			findings = append(findings, tlsFinding("TLS004", SeverityHigh, ConfidenceHigh,
-				"Invalid TLS certificate chain",
-				fmt.Sprintf("The server certificate for %s failed verification: %v", host, err),
-				seed,
-				"API7:2023 Security Misconfiguration", 295,
-				"Obtain a certificate from a trusted CA and ensure the full chain is served. Validate the server name matches the certificate.",
-			))
-		case strings.Contains(errStr, "certificate has expired"):
+		case errors.As(err, &certInvalid) && certInvalid.Reason == x509.Expired:
 			findings = append(findings, tlsFinding("TLS003", SeverityHigh, ConfidenceHigh,
 				"Expired TLS certificate",
 				fmt.Sprintf("The TLS certificate for %s has expired.", host),
@@ -106,13 +103,21 @@ func tlsCheckHost(ctx context.Context, host, addr string, seed executor.Result, 
 				"API7:2023 Security Misconfiguration", 298,
 				"Renew the TLS certificate before expiry. Configure automated certificate renewal (e.g. Let's Encrypt with ACME).",
 			))
+		case errors.As(err, &certInvalid) || errors.As(err, &unknownAuth) || errors.As(err, &hostMismatch):
+			findings = append(findings, tlsFinding("TLS004", SeverityHigh, ConfidenceHigh,
+				"Invalid TLS certificate chain",
+				fmt.Sprintf("The server certificate for %s failed verification: %v", host, err),
+				seed,
+				"API7:2023 Security Misconfiguration", 295,
+				"Obtain a certificate from a trusted CA and ensure the full chain is served. Validate the server name matches the certificate.",
+			))
 		}
-		// Errors above don't prevent TLS001/TLS002 checks — continue.
+		// Certificate errors do not prevent TLS001 — continue to version check.
 	} else {
 		state := conn403.ConnectionState()
 		conn403.Close()
 
-		// TLS003: check expiry on successfully verified cert.
+		// TLS003: expiry check on a cert that otherwise verifies.
 		for _, cert := range state.PeerCertificates {
 			if time.Now().After(cert.NotAfter) {
 				findings = append(findings, tlsFinding("TLS003", SeverityHigh, ConfidenceHigh,
@@ -139,13 +144,12 @@ func tlsCheckHost(ctx context.Context, host, addr string, seed executor.Result, 
 	}
 
 	// TLS001: try to connect forcing TLS 1.0 or 1.1.
-	// If the handshake succeeds the server accepts a deprecated protocol version.
-	_ = dialCtx // used implicitly via dialer timeout
+	// Success means the server accepts a deprecated protocol version.
 	connOld, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
 		ServerName:         host,
 		MinVersion:         tls.VersionTLS10,
 		MaxVersion:         tls.VersionTLS11,
-		InsecureSkipVerify: true, //nolint:gosec // intentional — we're testing server capabilities, not verifying identity
+		InsecureSkipVerify: true, //nolint:gosec // intentional — testing server version capability, not identity
 	})
 	if err == nil {
 		state := connOld.ConnectionState()
@@ -208,8 +212,3 @@ func tlsVersionName(v uint16) string {
 	}
 }
 
-// isCertError uses type assertion to check whether err is a specific x509 error type.
-func isCertError[T any](err error, _ *T) bool {
-	_, ok := err.(T)
-	return ok
-}

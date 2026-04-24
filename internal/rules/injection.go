@@ -237,11 +237,16 @@ func (r *NoSQLInjection) Check(seed executor.Result, _ auth.Context) ([]Probe, [
 	for k, v := range m {
 		injected[k] = v
 	}
+	injectedAny := false
 	for k, v := range m {
 		if _, isStr := v.(string); isStr {
 			injected[k] = map[string]any{"$gt": ""}
+			injectedAny = true
 			break
 		}
+	}
+	if !injectedAny {
+		return nil, nil
 	}
 	body, err := json.Marshal(injected)
 	if err != nil {
@@ -312,7 +317,8 @@ func (r *CommandInjection) Check(seed executor.Result, _ auth.Context) ([]Probe,
 		}
 		return nil
 	}
-	return injectionProbes(r.ID(), seed, `; echo spekto_cmd_test`, eval), nil
+	// "id" outputs "uid=N(name) gid=N(name)" — "uid=" and "gid=" are both in cmdOutputIndicators.
+	return injectionProbes(r.ID(), seed, `; id`, eval), nil
 }
 
 // ── INJ005: Path Traversal ─────────────────────────────────────────────────
@@ -351,7 +357,33 @@ func (r *PathTraversal) Check(seed executor.Result, _ auth.Context) ([]Probe, []
 		}
 		return nil
 	}
-	return injectionProbes(r.ID(), seed, `../../etc/passwd`, eval), nil
+	// Path-param injection is skipped: url.PathEscape encodes '/' as '%2F', making
+	// '../../etc/passwd' a single non-traversing segment. Only query and body params
+	// are probed where the value is URL-decoded correctly by the server.
+	var probes []Probe
+	method := strings.ToUpper(seed.Evidence.Request.Method)
+	isWrite := method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch
+
+	if injURL := queryInjectedURL(seed.Evidence.Request.URL, `../../etc/passwd`); injURL != seed.Evidence.Request.URL {
+		req := seedBaseRequest(seed)
+		req.ID = probeID(seed, r.ID()+"-query")
+		req.URL = injURL
+		req.AuthContextName = seed.AuthContextName
+		req.Headers = cloneNonRedactedHeaders(seed.Evidence.Request.Headers)
+		probes = append(probes, Probe{RuleID: r.ID(), Request: req, Evaluate: eval})
+	}
+	if isWrite {
+		if injBody := bodyInjected(seed.Evidence.Request.Body, `../../etc/passwd`); injBody != nil {
+			req := seedBaseRequest(seed)
+			req.ID = probeID(seed, r.ID()+"-body")
+			req.Body = injBody
+			req.ContentType = "application/json"
+			req.AuthContextName = seed.AuthContextName
+			req.Headers = cloneNonRedactedHeaders(seed.Evidence.Request.Headers)
+			probes = append(probes, Probe{RuleID: r.ID(), Request: req, Evaluate: eval})
+		}
+	}
+	return probes, nil
 }
 
 // ── INJ006: Server-Side Request Forgery (SSRF) ────────────────────────────
