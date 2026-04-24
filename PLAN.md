@@ -1369,27 +1369,27 @@ and disclosure checks so the tool covers the complete set of API security issues
 
 ### Gap analysis (from API issue taxonomy)
 
-| Issue | Current | Phase 10 target |
+| Issue | Rule | Status |
 |---|---|---|
-| Auth Bypass | ✅ AUTH001/002, GQL002, GRPC001 | — |
-| Verb Tampering | ✅ HDR004 | — |
-| Internal Server Error | ⚠️ GRPC004 only | INJ001 (REST/GraphQL 5xx) |
-| SQL Injection | ❌ | INJ002 |
-| NoSQL Injection | ❌ | INJ003 |
-| Command Injection | ❌ | INJ004 |
-| Path Traversal | ❌ | INJ005 |
-| SSRF | ❌ | INJ006 |
-| Default Credentials | ❌ | SEC001 |
-| Server Crash | ❌ | SEC002 |
-| PII / Sensitive Data Disclosure | ❌ | SEC003 |
-| Timeout (resource exhaustion) | ❌ | SEC004 |
-| TLS Algorithm Downgrade | ❌ | TLS001 |
-| TLS Broken/Risky Crypto | ❌ | TLS002 |
-| TLS Expired Key Usage | ❌ | TLS003 |
-| TLS Improper Chain of Trust | ❌ | TLS004 |
-| XSS in API responses | deferred | low priority for JSON APIs |
-| Invalid Request/Response Spec | deferred | requires schema validation engine |
-| Custom plugin / classifier | deferred | architecture work |
+| Auth Bypass | AUTH001/002, GQL002, GRPC001 | ✅ |
+| Verb Tampering | HDR004 | ✅ |
+| Internal Server Error | INJ001, SEC002 | ✅ |
+| SQL Injection | INJ002 | ✅ |
+| NoSQL Injection | INJ003 | ✅ |
+| Command Injection | INJ004 | ✅ |
+| Path Traversal | INJ005 | ✅ |
+| SSRF | INJ006 | ✅ |
+| Default Credentials | SEC001 | ✅ |
+| Server Crash | SEC002 | ✅ |
+| PII / Sensitive Data Disclosure | SEC003 | ✅ |
+| Timeout / Resource Exhaustion | SEC004 | ✅ |
+| TLS Algorithm Downgrade | TLS001 | ✅ |
+| TLS Broken/Risky Crypto | TLS002 | ✅ |
+| TLS Expired Certificate | TLS003 | ✅ |
+| TLS Improper Chain of Trust | TLS004 | ✅ |
+| XSS in API responses | — | ⏸ Deferred (low priority for JSON APIs) |
+| Invalid Request/Response Spec | — | ⏸ Deferred (requires schema validation engine) |
+| Custom plugin / classifier | — | ⏸ Deferred (architecture work) |
 
 ### Tasks
 
