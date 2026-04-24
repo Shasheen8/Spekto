@@ -6,6 +6,8 @@ import (
 	"os"
 )
 
+const maxInventoryBytes = 20 * 1024 * 1024
+
 func ParseInventory(data []byte) (Inventory, error) {
 	var inv Inventory
 	if err := json.Unmarshal(data, &inv); err != nil {
@@ -22,6 +24,13 @@ func ParseInventory(data []byte) (Inventory, error) {
 }
 
 func LoadInventoryFile(path string) (Inventory, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return Inventory{}, fmt.Errorf("read inventory: %w", err)
+	}
+	if info.Size() > maxInventoryBytes {
+		return Inventory{}, fmt.Errorf("inventory %s exceeds %d byte limit", path, maxInventoryBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Inventory{}, fmt.Errorf("read inventory: %w", err)

@@ -187,13 +187,13 @@ func parseOpenAPI3(ctx context.Context, data []byte, source string) (*openapi3.T
 		if u, err := url.Parse(source); err == nil && u.Scheme != "" && u.Host != "" {
 			loader := openapi3.NewLoader()
 			loader.Context = ctx
-			loader.IsExternalRefsAllowed = true
+			loader.IsExternalRefsAllowed = false
 			return loader.LoadFromDataWithPath(data, u)
 		}
 	}
 	loader := openapi3.NewLoader()
 	loader.Context = ctx
-	loader.IsExternalRefsAllowed = true
+	loader.IsExternalRefsAllowed = false
 	return loader.LoadFromData(data)
 }
 
@@ -238,7 +238,7 @@ func extractOpenAPI3(doc *openapi3.T, sourceRef inventory.SourceRef) ([]inventor
 			op.Status = inventory.StatusNormalized
 			op.Tags = inventory.SortStringsStable(pair.op.Tags)
 			op.DisplayName = op.Locator
-			op.Targets = append([]string(nil), servers...)
+			op.Origins = append([]string(nil), servers...)
 			op.REST = &inventory.RESTDetails{
 				Method:           strings.ToUpper(pair.method),
 				NormalizedPath:   normalizePath(path),
@@ -305,7 +305,11 @@ func extractOpenAPI3(doc *openapi3.T, sourceRef inventory.SourceRef) ([]inventor
 				}
 			}
 
-			op.AuthHints = authHintsFromSecurity(doc.Security, pair.op.Security)
+			var securitySchemes openapi3.SecuritySchemes
+			if doc.Components != nil {
+				securitySchemes = doc.Components.SecuritySchemes
+			}
+			op.AuthHints = authHintsFromSecurity(doc.Security, pair.op.Security, securitySchemes)
 			if len(pair.op.Callbacks) > 0 {
 				warnings = append(warnings, fmt.Sprintf("operation %s defines callbacks that are not yet ingested", op.Locator))
 			}
@@ -448,7 +452,7 @@ func toResponseMeta(code string, response *openapi3.Response) inventory.Response
 	return meta
 }
 
-func authHintsFromSecurity(global openapi3.SecurityRequirements, op *openapi3.SecurityRequirements) inventory.AuthHints {
+func authHintsFromSecurity(global openapi3.SecurityRequirements, op *openapi3.SecurityRequirements, schemes openapi3.SecuritySchemes) inventory.AuthHints {
 	reqs := global
 	if op != nil {
 		reqs = *op
@@ -468,22 +472,7 @@ func authHintsFromSecurity(global openapi3.SecurityRequirements, op *openapi3.Se
 	schemeSet := map[inventory.AuthScheme]struct{}{}
 	for _, req := range reqs {
 		for name := range req {
-			switch {
-			case strings.Contains(strings.ToLower(name), "bearer"), strings.Contains(strings.ToLower(name), "jwt"), strings.Contains(strings.ToLower(name), "oauth"):
-				schemeSet[inventory.AuthSchemeBearer] = struct{}{}
-			case strings.Contains(strings.ToLower(name), "basic"):
-				schemeSet[inventory.AuthSchemeBasic] = struct{}{}
-			case strings.Contains(strings.ToLower(name), "cookie"):
-				schemeSet[inventory.AuthSchemeCookie] = struct{}{}
-			case strings.Contains(strings.ToLower(name), "mtls"), strings.Contains(strings.ToLower(name), "tls"):
-				schemeSet[inventory.AuthSchemeMTLS] = struct{}{}
-			case strings.Contains(strings.ToLower(name), "query"):
-				schemeSet[inventory.AuthSchemeAPIKeyQuery] = struct{}{}
-			case strings.Contains(strings.ToLower(name), "key"), strings.Contains(strings.ToLower(name), "header"):
-				schemeSet[inventory.AuthSchemeAPIKeyHeader] = struct{}{}
-			default:
-				schemeSet[inventory.AuthSchemeUnknown] = struct{}{}
-			}
+			schemeSet[classifySecurityScheme(name, schemes)] = struct{}{}
 		}
 	}
 	for scheme := range schemeSet {
@@ -491,6 +480,58 @@ func authHintsFromSecurity(global openapi3.SecurityRequirements, op *openapi3.Se
 	}
 	sort.Slice(hints.AuthSchemes, func(i, j int) bool { return hints.AuthSchemes[i] < hints.AuthSchemes[j] })
 	return hints
+}
+
+func classifySecurityScheme(name string, schemes openapi3.SecuritySchemes) inventory.AuthScheme {
+	if schemes != nil {
+		if ref := schemes[name]; ref != nil && ref.Value != nil {
+			scheme := ref.Value
+			switch strings.ToLower(strings.TrimSpace(scheme.Type)) {
+			case "http":
+				switch strings.ToLower(strings.TrimSpace(scheme.Scheme)) {
+				case "bearer":
+					return inventory.AuthSchemeBearer
+				case "basic":
+					return inventory.AuthSchemeBasic
+				}
+			case "apikey":
+				switch strings.ToLower(strings.TrimSpace(scheme.In)) {
+				case "header":
+					return inventory.AuthSchemeAPIKeyHeader
+				case "query":
+					return inventory.AuthSchemeAPIKeyQuery
+				case "cookie":
+					return inventory.AuthSchemeCookie
+				}
+			case "oauth2", "openidconnect":
+				return inventory.AuthSchemeBearer
+			case "mutualtls":
+				return inventory.AuthSchemeMTLS
+			}
+			return inventory.AuthSchemeUnknown
+		}
+	}
+	return classifySecuritySchemeName(name)
+}
+
+func classifySecuritySchemeName(name string) inventory.AuthScheme {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.Contains(lower, "bearer"), strings.Contains(lower, "jwt"), strings.Contains(lower, "oauth"):
+		return inventory.AuthSchemeBearer
+	case strings.Contains(lower, "basic"):
+		return inventory.AuthSchemeBasic
+	case strings.Contains(lower, "cookie"):
+		return inventory.AuthSchemeCookie
+	case strings.Contains(lower, "mtls"), strings.Contains(lower, "tls"):
+		return inventory.AuthSchemeMTLS
+	case strings.Contains(lower, "query"):
+		return inventory.AuthSchemeAPIKeyQuery
+	case strings.Contains(lower, "key"), strings.Contains(lower, "header"):
+		return inventory.AuthSchemeAPIKeyHeader
+	default:
+		return inventory.AuthSchemeUnknown
+	}
 }
 
 func firstSchemaRef(m map[string]string) string {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -32,16 +33,16 @@ type HTTPRequest struct {
 }
 
 type HTTPResult struct {
-	RequestID          string
-	OperationID        string
-	AuthContextName    string
-	Method             string
-	URL                string
-	StatusCode         int
-	Duration           time.Duration
-	StartedAt          time.Time
-	Truncated          bool
-	Error              string
+	RequestID       string
+	OperationID     string
+	AuthContextName string
+	Method          string
+	URL             string
+	StatusCode      int
+	Duration        time.Duration
+	StartedAt       time.Time
+	Truncated       bool
+	Error           string
 
 	RequestBody        []byte
 	RequestContentType string
@@ -58,6 +59,34 @@ type HTTPPolicy struct {
 	Retries          int
 	RateLimit        float64
 	FollowRedirects  bool
+	TargetAllowlist  []string
+	AllowWrite       bool
+	Budget           *RequestBudget
+}
+
+type RequestBudget struct {
+	mu        sync.Mutex
+	remaining int
+}
+
+func NewRequestBudget(limit int) *RequestBudget {
+	if limit <= 0 {
+		limit = 1
+	}
+	return &RequestBudget{remaining: limit}
+}
+
+func (b *RequestBudget) Consume() bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.remaining <= 0 {
+		return false
+	}
+	b.remaining--
+	return true
 }
 
 type httpExecutorState struct {
@@ -77,6 +106,8 @@ func NewHTTPPolicy(scan config.ScanPolicy) HTTPPolicy {
 		Retries:          scan.Retries,
 		RateLimit:        scan.RateLimit,
 		FollowRedirects:  scan.FollowRedirects,
+		TargetAllowlist:  append([]string(nil), scan.TargetAllowlist...),
+		AllowWrite:       scan.AllowWrite,
 	}
 	if policy.Concurrency <= 0 {
 		policy.Concurrency = 1
@@ -90,6 +121,7 @@ func NewHTTPPolicy(scan config.ScanPolicy) HTTPPolicy {
 	if policy.MaxResponseBytes <= 0 {
 		policy.MaxResponseBytes = defaultMaxResponseBytes
 	}
+	policy.Budget = NewRequestBudget(policy.RequestBudget)
 	return policy
 }
 
@@ -109,10 +141,13 @@ func ExecuteHTTP(ctx context.Context, client *http.Client, requests []HTTPReques
 	if policy.MaxResponseBytes <= 0 {
 		policy.MaxResponseBytes = defaultMaxResponseBytes
 	}
+	if policy.Budget == nil {
+		policy.Budget = NewRequestBudget(policy.RequestBudget)
+	}
 
 	results := make([]HTTPResult, len(requests))
 	limit := len(requests)
-	if policy.RequestBudget < limit {
+	if policy.Budget == nil && policy.RequestBudget < limit {
 		limit = policy.RequestBudget
 	}
 	for i := limit; i < len(requests); i++ {
@@ -126,7 +161,7 @@ func ExecuteHTTP(ctx context.Context, client *http.Client, requests []HTTPReques
 		registry:    registry,
 		policy:      policy,
 		limiter:     newRateLimiter(policy.RateLimit),
-		clientCache: map[string]*http.Client{"": cloneHTTPClient(client, nil, policy.FollowRedirects)},
+		clientCache: map[string]*http.Client{"": cloneHTTPClient(client, nil, policy)},
 	}
 
 	type job struct {
@@ -200,6 +235,10 @@ func (s *httpExecutorState) executeOneHTTP(ctx context.Context, baseClient *http
 
 	start := time.Now()
 	for attempt := 0; attempt <= s.policy.Retries; attempt++ {
+		if !s.policy.Budget.Consume() {
+			result.Error = "skipped: request budget exceeded"
+			return result
+		}
 		if err := s.limiter.Wait(ctx); err != nil {
 			result.Error = err.Error()
 			return result
@@ -300,7 +339,7 @@ func (s *httpExecutorState) clientForContext(baseClient *http.Client, authContex
 		tlsConfig = value
 	}
 
-	client := cloneHTTPClient(baseClient, tlsConfig, s.policy.FollowRedirects)
+	client := cloneHTTPClient(baseClient, tlsConfig, s.policy)
 
 	s.clientMu.Lock()
 	s.clientCache[cacheKey] = client
@@ -308,15 +347,26 @@ func (s *httpExecutorState) clientForContext(baseClient *http.Client, authContex
 	return client, nil
 }
 
-func cloneHTTPClient(base *http.Client, tlsConfig *tls.Config, followRedirects bool) *http.Client {
+func cloneHTTPClient(base *http.Client, tlsConfig *tls.Config, policy HTTPPolicy) *http.Client {
 	if base == nil {
 		base = &http.Client{}
 	}
 	cloned := *base
 	cloned.Transport = cloneTransport(base.Transport, tlsConfig)
-	if !followRedirects {
+	if !policy.FollowRedirects {
 		cloned.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
+		}
+	} else {
+		cloned.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			stripSensitiveRedirectHeaders(req, via)
+			if err := ValidateURLAllowlist(req.URL.String(), policy.TargetAllowlist); err != nil {
+				return err
+			}
+			return nil
 		}
 	}
 	return &cloned
@@ -396,6 +446,39 @@ func isSensitiveHeader(key string) bool {
 	default:
 		return false
 	}
+}
+
+func ValidateURLAllowlist(rawURL string, allowlist []string) error {
+	if len(allowlist) == 0 {
+		return nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("url %q uses unsupported scheme %q", rawURL, parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if !hostAllowed(host, allowlist) {
+		return fmt.Errorf("url host %q is outside scan target_allowlist", host)
+	}
+	return nil
+}
+
+func stripSensitiveRedirectHeaders(req *http.Request, via []*http.Request) {
+	if len(via) == 0 || sameOrigin(req.URL, via[len(via)-1].URL) {
+		return
+	}
+	for key := range req.Header {
+		if isSensitiveHeader(key) {
+			req.Header.Del(key)
+		}
+	}
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
 func minInt(a, b int) int {

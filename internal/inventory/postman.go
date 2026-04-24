@@ -45,6 +45,7 @@ type postmanURL struct {
 type PostmanDocument struct {
 	Operations []Operation
 	SourceRef  SourceRef
+	Warnings   []string
 }
 
 func ParsePostman(data []byte, source string) (*PostmanDocument, error) {
@@ -61,9 +62,11 @@ func ParsePostman(data []byte, source string) (*PostmanDocument, error) {
 	}
 
 	opsByID := map[string]Operation{}
+	var warnings []string
 	for _, item := range collection.Item {
-		walkPostmanItem(item, sourceRef, opsByID)
+		walkPostmanItem(item, sourceRef, opsByID, &warnings)
 	}
+	sourceRef.Warnings = append(sourceRef.Warnings, warnings...)
 
 	ops := make([]Operation, 0, len(opsByID))
 	for _, op := range opsByID {
@@ -79,10 +82,11 @@ func ParsePostman(data []byte, source string) (*PostmanDocument, error) {
 	return &PostmanDocument{
 		Operations: ops,
 		SourceRef:  sourceRef,
+		Warnings:   warnings,
 	}, nil
 }
 
-func walkPostmanItem(item postmanItem, sourceRef SourceRef, opsByID map[string]Operation) {
+func walkPostmanItem(item postmanItem, sourceRef SourceRef, opsByID map[string]Operation, warnings *[]string) {
 	if item.Request != nil {
 		if op, ok, err := postmanRequestOperation(*item.Request, item.Name, sourceRef); err == nil && ok {
 			if existing, found := opsByID[op.ID]; found {
@@ -90,10 +94,12 @@ func walkPostmanItem(item postmanItem, sourceRef SourceRef, opsByID map[string]O
 			} else {
 				opsByID[op.ID] = op
 			}
+		} else if err != nil {
+			*warnings = append(*warnings, fmt.Sprintf("postman item %q: %v", item.Name, err))
 		}
 	}
 	for _, child := range item.Item {
-		walkPostmanItem(child, sourceRef, opsByID)
+		walkPostmanItem(child, sourceRef, opsByID, warnings)
 	}
 }
 
@@ -116,7 +122,7 @@ func postmanRequestOperation(req postmanRequest, itemName string, sourceRef Sour
 	op.Provenance = Provenance{Observed: true}
 	op.Confidence = 0.8
 	op.Status = StatusNormalized
-	op.Targets = uniqueStrings([]string{originURL(targetURL)})
+	op.Origins = uniqueStrings([]string{originURL(targetURL)})
 	op.DisplayName = itemName
 	if strings.TrimSpace(op.DisplayName) == "" {
 		op.DisplayName = op.Locator
@@ -138,7 +144,7 @@ func postmanRequestOperation(req postmanRequest, itemName string, sourceRef Sour
 		op.Examples.Parameters = append(op.Examples.Parameters, ParameterValue{
 			Name:    header.Key,
 			In:      "header",
-			Example: header.Value,
+			Example: RedactExample(header.Key, "header", header.Value),
 		})
 	}
 
@@ -150,7 +156,7 @@ func postmanRequestOperation(req postmanRequest, itemName string, sourceRef Sour
 		op.Examples.Parameters = append(op.Examples.Parameters, ParameterValue{
 			Name:    query.Key,
 			In:      "query",
-			Example: query.Value,
+			Example: RedactExample(query.Key, "query", query.Value),
 		})
 	}
 
@@ -162,7 +168,7 @@ func postmanRequestOperation(req postmanRequest, itemName string, sourceRef Sour
 		}
 		op.Examples.RequestBodies = append(op.Examples.RequestBodies, ExampleValue{
 			MediaType: "application/json",
-			Value:     req.Body.Raw,
+			Value:     RedactBodyExample(req.Body.Raw),
 		})
 	}
 

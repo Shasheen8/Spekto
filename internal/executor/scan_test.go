@@ -72,6 +72,89 @@ func TestScanRESTTargetProducesBundle(t *testing.T) {
 	}
 }
 
+func TestScanSkipsMutatingRESTOperationsByDefault(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	operation := inventory.NewRESTOperation(http.MethodPost, "/v1/models")
+	operation.Confidence = 0.9
+	operation.Status = inventory.StatusSeedable
+	operation.REST = &inventory.RESTDetails{
+		Method:         http.MethodPost,
+		NormalizedPath: "/v1/models",
+	}
+
+	cfg := config.Config{
+		Targets: []config.Target{{
+			Name:     "rest",
+			Protocol: "rest",
+			BaseURL:  server.URL,
+		}},
+		Scan: config.ScanPolicy{
+			Concurrency:      1,
+			RequestBudget:    5,
+			Timeout:          2 * time.Second,
+			MaxResponseBytes: 1024,
+		},
+	}
+
+	bundle, err := Scan(context.Background(), cfg, inventory.Merge([]inventory.Operation{operation}), ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+	if called {
+		t.Fatalf("expected mutating operation to be skipped without sending a request")
+	}
+	if bundle.Summary.Total != 1 || bundle.Summary.Skipped != 1 {
+		t.Fatalf("unexpected summary: %#v", bundle.Summary)
+	}
+	if bundle.Results[0].Error != "skipped: mutating operation requires explicit write opt-in" {
+		t.Fatalf("unexpected skip reason: %s", bundle.Results[0].Error)
+	}
+}
+
+func TestScanMatchesOperationsByTargetOrigin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	operation := inventory.NewRESTOperation(http.MethodGet, "/v1/models")
+	operation.Origins = []string{server.URL}
+	operation.Confidence = 0.9
+	operation.Status = inventory.StatusSeedable
+	operation.REST = &inventory.RESTDetails{
+		Method:         http.MethodGet,
+		NormalizedPath: "/v1/models",
+	}
+
+	cfg := config.Config{
+		Targets: []config.Target{{
+			Name:     "rest-prod",
+			Protocol: "rest",
+			BaseURL:  server.URL,
+		}},
+		Scan: config.ScanPolicy{
+			Concurrency:      1,
+			RequestBudget:    5,
+			Timeout:          2 * time.Second,
+			MaxResponseBytes: 1024,
+		},
+	}
+
+	bundle, err := Scan(context.Background(), cfg, inventory.Merge([]inventory.Operation{operation}), ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+	if bundle.Summary.Total != 1 || bundle.Summary.Succeeded != 1 {
+		t.Fatalf("operation with matching origin should be scanned, summary: %#v", bundle.Summary)
+	}
+}
+
 func TestScanGraphQLTargetProducesGraphQLQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
@@ -168,6 +251,22 @@ func TestScanHTTPMarksUnauthorizedResponseFailed(t *testing.T) {
 	}
 	if bundle.Results[0].Status != "failed" {
 		t.Fatalf("expected failed result, got %s", bundle.Results[0].Status)
+	}
+}
+
+func TestCoverageCountsUniqueOperationsAndExecutionAttempts(t *testing.T) {
+	bundle := Bundle{Results: []Result{
+		{Target: "prod", OperationID: "op-1", Locator: "GET:/a", Protocol: inventory.ProtocolREST, Status: "failed"},
+		{Target: "prod", OperationID: "op-1", Locator: "GET:/a", Protocol: inventory.ProtocolREST, Status: "succeeded"},
+		{Target: "prod", OperationID: "op-2", Locator: "GET:/b", Protocol: inventory.ProtocolREST, Status: "skipped", Error: "skipped: request budget exceeded"},
+	}}
+	bundle.Finalize()
+
+	if bundle.Coverage.ExecutionAttempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", bundle.Coverage.ExecutionAttempts)
+	}
+	if bundle.Coverage.TotalOperations != 2 || bundle.Coverage.Covered != 1 || bundle.Coverage.Uncovered != 1 {
+		t.Fatalf("unexpected coverage: %#v", bundle.Coverage)
 	}
 }
 

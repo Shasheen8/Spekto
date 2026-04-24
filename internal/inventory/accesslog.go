@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+const maxAccessLogBytes = 20 * 1024 * 1024
+const maxAccessLogRecords = 100000
+
 type accessLogRecord struct {
 	Method string `json:"method"`
 	Path   string `json:"path"`
@@ -27,6 +30,13 @@ type AccessLogDocument struct {
 }
 
 func ParseAccessLogFile(path string) (*AccessLogDocument, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxAccessLogBytes {
+		return nil, fmt.Errorf("access log %s exceeds %d byte limit", path, maxAccessLogBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -93,6 +103,9 @@ func parseAccessLogRecords(data []byte) ([]accessLogRecord, error) {
 		if err := json.Unmarshal(data, &records); err != nil {
 			return nil, err
 		}
+		if len(records) > maxAccessLogRecords {
+			return nil, fmt.Errorf("access log has %d records, limit is %d", len(records), maxAccessLogRecords)
+		}
 		return records, nil
 	}
 	var records []accessLogRecord
@@ -108,6 +121,9 @@ func parseAccessLogRecords(data []byte) ([]accessLogRecord, error) {
 			return nil, err
 		}
 		records = append(records, record)
+		if len(records) > maxAccessLogRecords {
+			return nil, fmt.Errorf("access log has more than %d records", maxAccessLogRecords)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -134,7 +150,7 @@ func accessLogOperation(record accessLogRecord, sourceRef SourceRef) (Operation,
 	op.Provenance = Provenance{Observed: true}
 	op.Confidence = 0.7
 	op.Status = StatusNormalized
-	op.Targets = uniqueStrings([]string{originURL(targetURL)})
+	op.Origins = uniqueStrings([]string{originURL(targetURL)})
 	op.DisplayName = op.Locator
 	op.REST = &RESTDetails{
 		Method:           method,

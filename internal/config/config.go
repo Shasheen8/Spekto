@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -87,10 +89,14 @@ type ScanPolicy struct {
 	RateLimit        float64       `yaml:"rate_limit,omitempty"`
 	MaxResponseBytes int64         `yaml:"max_response_bytes,omitempty"`
 	FollowRedirects  bool          `yaml:"follow_redirects,omitempty"`
+	BodyCapture      string        `yaml:"body_capture,omitempty"`
+	AllowWrite       bool          `yaml:"allow_write,omitempty"`
+	AllowUnsafeRules bool          `yaml:"allow_unsafe_rules,omitempty"`
+	AllowLiveSSRF    bool          `yaml:"allow_live_ssrf,omitempty"`
 	// TargetAllowlist restricts scanning to targets whose hostname matches an
 	// entry in the list. Supports exact hostnames and wildcard prefixes (*.example.com).
 	// When empty, all configured targets are permitted.
-	TargetAllowlist  []string      `yaml:"target_allowlist,omitempty"`
+	TargetAllowlist []string `yaml:"target_allowlist,omitempty"`
 }
 
 type OutputConfig struct {
@@ -201,6 +207,34 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 		}
 		c.Scan.FollowRedirects = value
 	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_SAFETY_LEVEL")); raw != "" {
+		c.Scan.SafetyLevel = strings.ToLower(raw)
+		applySafetyLevel(&c.Scan)
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_BODY_CAPTURE")); raw != "" {
+		c.Scan.BodyCapture = strings.ToLower(raw)
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_ALLOW_WRITE")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_SCAN_ALLOW_WRITE: %w", err)
+		}
+		c.Scan.AllowWrite = value
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_ALLOW_UNSAFE_RULES")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_SCAN_ALLOW_UNSAFE_RULES: %w", err)
+		}
+		c.Scan.AllowUnsafeRules = value
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_SCAN_ALLOW_LIVE_SSRF")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_SCAN_ALLOW_LIVE_SSRF: %w", err)
+		}
+		c.Scan.AllowLiveSSRF = value
+	}
 	if raw := strings.TrimSpace(getenv("SPEKTO_OUTPUT_JSON")); raw != "" {
 		c.Output.JSONPath = raw
 	}
@@ -220,8 +254,7 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 		c.Output.FindingsPath = raw
 	}
 
-	c.resolveAuthContextEnv(getenv)
-	return nil
+	return c.resolveAuthContextEnv(getenv)
 }
 
 func (c Config) SelectTargets(names []string) ([]Target, error) {
@@ -289,6 +322,9 @@ func (c Config) Validate() error {
 				return fmt.Errorf("target %q has unsupported discovery mode %q", target.Name, mode)
 			}
 		}
+		if err := validatePlaintextTarget(target, c.AuthContexts); err != nil {
+			return err
+		}
 	}
 
 	authNames := map[string]struct{}{}
@@ -339,6 +375,16 @@ func (c Config) Validate() error {
 	if c.Scan.MaxResponseBytes < 0 {
 		return errors.New("scan max_response_bytes must not be negative")
 	}
+	switch c.Scan.SafetyLevel {
+	case "read_only", "write", "unsafe":
+	default:
+		return fmt.Errorf("unsupported scan safety_level %q", c.Scan.SafetyLevel)
+	}
+	switch c.Scan.BodyCapture {
+	case "redacted", "full":
+	default:
+		return fmt.Errorf("unsupported scan body_capture %q", c.Scan.BodyCapture)
+	}
 
 	return nil
 }
@@ -356,6 +402,15 @@ func (c *Config) applyDefaults() {
 	if c.Scan.MaxResponseBytes == 0 {
 		c.Scan.MaxResponseBytes = 64 * 1024
 	}
+	c.Scan.SafetyLevel = strings.ToLower(strings.TrimSpace(c.Scan.SafetyLevel))
+	if c.Scan.SafetyLevel == "" {
+		c.Scan.SafetyLevel = "read_only"
+	}
+	c.Scan.BodyCapture = strings.ToLower(strings.TrimSpace(c.Scan.BodyCapture))
+	if c.Scan.BodyCapture == "" {
+		c.Scan.BodyCapture = "redacted"
+	}
+	applySafetyLevel(&c.Scan)
 	for i := range c.Targets {
 		c.Targets[i].Protocol = strings.ToLower(strings.TrimSpace(c.Targets[i].Protocol))
 		c.Targets[i].DiscoveryModes = normalizeStrings(c.Targets[i].DiscoveryModes)
@@ -372,21 +427,49 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-func (c *Config) resolveAuthContextEnv(getenv func(string) string) {
+func applySafetyLevel(scan *ScanPolicy) {
+	switch scan.SafetyLevel {
+	case "write":
+		scan.AllowWrite = true
+	case "unsafe":
+		scan.AllowWrite = true
+		scan.AllowUnsafeRules = true
+		scan.AllowLiveSSRF = true
+	}
+}
+
+func (c *Config) resolveAuthContextEnv(getenv func(string) string) error {
 	for i := range c.AuthContexts {
 		if env := strings.TrimSpace(c.AuthContexts[i].BearerTokenEnv); env != "" {
-			c.AuthContexts[i].BearerToken = getenv(env)
+			value := strings.TrimSpace(getenv(env))
+			if value == "" {
+				return fmt.Errorf("auth context %q bearer_token_env %q is not set", c.AuthContexts[i].Name, env)
+			}
+			c.AuthContexts[i].BearerToken = value
 		}
 		if env := strings.TrimSpace(c.AuthContexts[i].BasicUsernameEnv); env != "" {
-			c.AuthContexts[i].BasicUsername = getenv(env)
+			value := strings.TrimSpace(getenv(env))
+			if value == "" {
+				return fmt.Errorf("auth context %q basic_username_env %q is not set", c.AuthContexts[i].Name, env)
+			}
+			c.AuthContexts[i].BasicUsername = value
 		}
 		if env := strings.TrimSpace(c.AuthContexts[i].BasicPasswordEnv); env != "" {
-			c.AuthContexts[i].BasicPassword = getenv(env)
+			value := strings.TrimSpace(getenv(env))
+			if value == "" {
+				return fmt.Errorf("auth context %q basic_password_env %q is not set", c.AuthContexts[i].Name, env)
+			}
+			c.AuthContexts[i].BasicPassword = value
 		}
 		if env := strings.TrimSpace(c.AuthContexts[i].APIKeyValueEnv); env != "" {
-			c.AuthContexts[i].APIKeyValue = getenv(env)
+			value := strings.TrimSpace(getenv(env))
+			if value == "" {
+				return fmt.Errorf("auth context %q api_key_value_env %q is not set", c.AuthContexts[i].Name, env)
+			}
+			c.AuthContexts[i].APIKeyValue = value
 		}
 	}
+	return nil
 }
 
 func normalizeStrings(values []string) []string {
@@ -439,3 +522,35 @@ func excludeTargets(targets []Target, exclude []string) []Target {
 }
 
 const httpMethodPost = "POST"
+
+func validatePlaintextTarget(target Target, authContexts []AuthContext) error {
+	if target.AllowPlaintext || target.Protocol == "grpc" {
+		return nil
+	}
+	rawURL := strings.TrimSpace(target.BaseURL)
+	if rawURL == "" {
+		rawURL = strings.TrimSpace(target.Endpoint)
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" {
+		return fmt.Errorf("target %q has invalid url %q", target.Name, rawURL)
+	}
+	if parsed.Scheme != "http" {
+		return nil
+	}
+	if isLoopbackHost(parsed.Hostname()) {
+		return nil
+	}
+	if len(target.AuthContexts) > 0 || len(authContexts) > 0 {
+		return fmt.Errorf("target %q uses plaintext HTTP with auth; set allow_plaintext only for approved non-production targets", target.Name)
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}

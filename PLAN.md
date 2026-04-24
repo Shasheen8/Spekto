@@ -22,6 +22,7 @@
 | 8 | Reporting, coverage, operator UX | ✅ Complete |
 | 9 | Validation and hardening | ✅ Complete |
 | 10 | Injection, TLS, and disclosure rules | ✅ Complete |
+| 11 | Post-review safety, correctness, and test hardening | ✅ Complete |
 
 ## Objective
 
@@ -1439,6 +1440,147 @@ and disclosure checks so the tool covers the complete set of API security issues
 - [x] TLS four-check suite implemented
 - [x] Default credentials, server crash, PII disclosure, and timeout implemented
 - [x] Full API issue taxonomy covered (excluding XSS, spec validation, and plugin system)
+
+## Phase 11: Post-Review Safety, Correctness, and Test Hardening
+
+### Status
+
+- [x] Phase 11 implemented
+
+### Goal
+
+Fix the end-to-end review findings before treating Spekto as production-safe. This phase re-establishes the core product promise: read-only by default, bounded by explicit scope, redacted by default, and tested where the scanner makes security claims.
+
+### Tasks
+
+#### 11.1 — Production safety gates
+
+- [x] Default `scan` seed execution to read-only methods unless an explicit write gate is enabled
+  - skip `POST`, `PUT`, `PATCH`, `DELETE`, and other mutating methods by default
+  - add a clear opt-in flag/config path such as `--allow-write` / `scan.safety_level`
+  - preserve skipped results with a block reason so coverage does not look better than reality
+- [x] Move destructive, stress, and metadata-touching rules behind explicit opt-in gates
+  - `HDR004` must not send `DELETE` method override probes by default
+  - `SEC002` and `SEC004` must not send crash or resource-exhaustion payloads by default
+  - `INJ006` must not use live cloud metadata URLs by default
+- [x] Enforce a global request and probe budget
+  - count seed requests, retries, rule probes, stateful probes, gRPC probes, and TLS probes against explicit budgets
+  - keep per-seed caps as secondary limits, not the main safety control
+- [x] Revalidate scope on every outbound hop
+  - apply `scan.target_allowlist` before login flow execution
+  - apply allowlist checks to login URLs, redirects, active discovery targets, remote refs, and gRPC reflection targets
+  - when `follow_redirects` is enabled, enforce allowlist, scheme restrictions, redirect count limits, and cross-origin auth stripping
+- [x] Reject plaintext credential use by default
+  - for `REST` and `GraphQL`, reject non-HTTPS targets carrying auth unless `allow_plaintext` is explicitly true or the host is loopback
+  - keep the existing gRPC plaintext behavior explicit and documented
+- [x] Fail closed on missing secret environment variables
+  - empty `bearer_token_env`, `basic_password_env`, and `api_key_value_env` resolutions must be config errors when the context is selected or target-bound
+  - dry-run should show missing credential bindings without printing secret values
+
+#### 11.2 — Inventory and discovery correctness
+
+- [x] Separate configured target names from discovered server origins
+  - `Operation.Targets` must not mix target names with URL origins
+  - preserve spec/traffic origins in `REST.ServerCandidates` or a dedicated origin field
+  - update scan selection so OpenAPI `servers` values do not cause operations to be skipped when the configured target name differs
+- [x] Fix auth requirement merge precedence
+  - merge conservatively with `yes > unknown > no`
+  - preserve conflicting source signals for operator review
+  - add tests for every ordering combination
+- [x] Make active discovery respect base URL path prefixes
+  - `--base-url https://example.com/api/v2` should probe under `/api/v2`
+  - add tests for root and prefixed bases
+- [x] Disable unsafe remote OpenAPI external ref resolution by default
+  - local file parsing may opt into file refs
+  - active remote discovery should block arbitrary remote refs unless same-origin and bounded
+  - block private, loopback, link-local, and metadata IP ranges for remote refs by default
+- [x] Classify OpenAPI auth schemes from `components.securitySchemes`
+  - stop relying on arbitrary security requirement names
+  - resolve scheme type, `in`, `scheme`, `bearerFormat`, and flows
+  - emit warnings when classification falls back to name heuristics
+- [x] Surface ingestion failures as warnings or errors
+  - active discovery must not silently drop parser failures
+  - Postman parsing must collect invalid item errors rather than swallowing them
+  - return non-zero when all requested sources produce zero operations unless the user explicitly permits empty output
+- [x] Add ingestion limits
+  - maximum input size for specs, HAR, Postman, manual seeds, and access logs
+  - streaming or record-capped access-log parsing
+  - bounded example count per operation
+
+#### 11.3 — Secret and evidence minimization
+
+- [x] Redact traffic-derived examples before writing inventory artifacts
+  - redact `Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key`, and name patterns such as `token`, `secret`, `password`, `key`, and `credential`
+  - redact sensitive query parameters and cookie values
+  - truncate example values by default
+- [x] Make request and response body capture profile-based
+  - default to metadata and bounded snippets, not full bodies
+  - require explicit opt-in for replay-grade full body capture
+  - redact common JSON/form secret fields before persistence
+- [x] Split seed replay data from evidence data
+  - seed stores should keep only the minimum data needed to reproduce a successful request
+  - findings should include enough evidence to validate the issue without retaining unrelated response data
+- [x] Harden CI artifact behavior
+  - do not upload full `evidence.json` or `seeds.json` by default
+  - prefer redacted findings, coverage, and SARIF artifacts
+  - document artifact retention guidance for production scans
+- [x] Avoid unsafe stdout defaults
+  - refuse or warn before printing full evidence bundles to stdout unless an explicit unsafe/debug flag is provided
+
+#### 11.4 — Execution and rule correctness
+
+- [x] Put gRPC dial, reflection resolution, and invocation under the configured timeout
+  - match the safer `ProbeGRPCMethod` pattern for normal execution
+  - add tests for slow reflection and streaming skip behavior
+- [x] Fix path-parameter injection encoding
+  - avoid double escaping payloads
+  - add tests asserting the exact outbound URL for SQL, command, and SSRF path probes
+- [x] Treat auth-probe redirects as authentication rejections unless proven otherwise
+  - `AUTH001`, `AUTH002`, JWT probes, default credentials, and GraphQL auth bypass should not treat login redirects as successful bypasses
+  - prefer 2xx plus protected-content similarity or rule-specific success criteria
+- [x] Improve stateful authorization deduplication
+  - include source auth context and a stable resource key such as URL/request ID
+  - avoid skipping distinct objects for the same operation and alternate auth context
+- [x] Rework `JWT005`
+  - either reclassify current KID mutation as a signature-verification variant
+  - or implement a valid controlled-key/JWKS-style KID test that proves KID lookup injection separately from signature bypass
+- [x] Make finding IDs variant-aware
+  - include rule variant, target, operation, and probe discriminator in stable IDs
+  - add SARIF `partialFingerprints` so distinct variants are not collapsed downstream
+
+#### 11.5 — Reporting, testing, and CI hardening
+
+- [x] Add direct `internal/rules` tests
+  - table-driven tests for every rule's skip conditions, probe construction, and positive/negative evaluation
+  - orchestration tests for immediate findings, probe-backed findings, and budget enforcement
+  - focused tests for unsafe rule gating and auth redirect behavior
+- [x] Add direct `internal/report` tests
+  - SARIF schema/version, rule ordering, severity mapping, locations, and fingerprints
+  - coverage summaries for unique operations versus execution attempts
+  - text summary output for findings, blocked reasons, and schema gaps
+- [x] Add scan CLI integration tests
+  - findings JSON, SARIF, coverage output, `--no-rules`, `--stateful`, `--operation`, `--tag`, `--target`, and `--exclude-target`
+  - vulnerable local `httptest` targets for auth bypass, CORS, GraphQL, and body-rule paths
+- [x] Define the local validation gate and future CI checklist
+  - local required checks: `go test ./...`, `go vet ./...`, `go test -race ./...`, and `go test -cover ./...`
+  - local optional dependency check: `govulncheck ./...` when the tool is installed
+  - document these commands as the release/PR readiness checklist until CI is established
+  - when CI is established later, move the same checks into the CI workflow instead of adding new Spekto CLI commands
+- [x] Update docs and examples
+  - make read-only defaults and unsafe opt-ins explicit in `README.md`
+  - update `spekto.example.yaml` with safe production defaults
+  - document redacted versus replay-grade artifact modes
+
+### Exit Criteria
+
+- [x] default production scan sends no mutating seed requests, destructive probes, stress probes, or live metadata SSRF probes
+- [x] target allowlist applies to configured targets, login URLs, redirects, active discovery, gRPC reflection, and remote refs
+- [x] generated inventory, evidence, seed, and CI artifacts are redacted by default
+- [x] OpenAPI `servers` and traffic origins no longer cause configured targets to skip matching operations
+- [x] request/probe budgets are scan-wide and include retries
+- [x] `internal/rules` and `internal/report` have direct tests for their highest-risk behavior
+- [x] local release/PR readiness checklist runs tests, vet, race checks, coverage reporting, and dependency vulnerability scanning where available
+- [x] all Phase 11 fixes are validated with local fixtures before recurring production scans are enabled
 
 ## GitHub Actions Rollout Plan
 

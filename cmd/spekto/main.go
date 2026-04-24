@@ -73,6 +73,7 @@ func runDiscoverSpec(args []string) error {
 	var descriptorSets multiValue
 	var grpcReflectionTargets multiValue
 	var outPath string
+	var allowEmpty bool
 
 	fs.Var(&openapiPaths, "openapi", "OpenAPI or Swagger file path")
 	fs.Var(&graphqlPaths, "graphql-schema", "GraphQL SDL or introspection JSON file path")
@@ -81,6 +82,7 @@ func runDiscoverSpec(args []string) error {
 	fs.Var(&descriptorSets, "descriptor-set", "Protobuf descriptor set file path")
 	fs.Var(&grpcReflectionTargets, "grpc-reflection", "gRPC reflection target host:port")
 	fs.StringVar(&outPath, "out", "", "Output path for canonical inventory JSON")
+	fs.BoolVar(&allowEmpty, "allow-empty", false, "Allow writing an inventory with zero operations")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -93,6 +95,9 @@ func runDiscoverSpec(args []string) error {
 	var operationSets [][]inventory.Operation
 
 	for _, path := range openapiPaths {
+		if err := checkInputFileSize(path); err != nil {
+			return err
+		}
 		doc, err := restdiscovery.ParseFile(context.Background(), path)
 		if err != nil {
 			return fmt.Errorf("openapi %s: %w", path, err)
@@ -101,7 +106,7 @@ func runDiscoverSpec(args []string) error {
 	}
 
 	for _, path := range graphqlPaths {
-		data, err := os.ReadFile(path)
+		data, err := readBoundedFile(path)
 		if err != nil {
 			return fmt.Errorf("graphql schema %s: %w", path, err)
 		}
@@ -139,7 +144,7 @@ func runDiscoverSpec(args []string) error {
 		operationSets = append(operationSets, doc.Operations)
 	}
 
-	return writeMergedInventory(outPath, operationSets...)
+	return writeMergedInventory(outPath, allowEmpty, operationSets...)
 }
 
 func runDiscoverTraffic(args []string) error {
@@ -150,11 +155,13 @@ func runDiscoverTraffic(args []string) error {
 	var postmanPaths multiValue
 	var accessLogPaths multiValue
 	var outPath string
+	var allowEmpty bool
 
 	fs.Var(&harPaths, "har", "HAR file path")
 	fs.Var(&postmanPaths, "postman", "Postman collection file path")
 	fs.Var(&accessLogPaths, "access-log", "Access log extract file path")
 	fs.StringVar(&outPath, "out", "", "Output path for canonical inventory JSON")
+	fs.BoolVar(&allowEmpty, "allow-empty", false, "Allow writing an inventory with zero operations")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -165,7 +172,7 @@ func runDiscoverTraffic(args []string) error {
 
 	var operationSets [][]inventory.Operation
 	for _, path := range harPaths {
-		data, err := os.ReadFile(path)
+		data, err := readBoundedFile(path)
 		if err != nil {
 			return fmt.Errorf("har %s: %w", path, err)
 		}
@@ -176,7 +183,7 @@ func runDiscoverTraffic(args []string) error {
 		operationSets = append(operationSets, doc.Operations)
 	}
 	for _, path := range postmanPaths {
-		data, err := os.ReadFile(path)
+		data, err := readBoundedFile(path)
 		if err != nil {
 			return fmt.Errorf("postman %s: %w", path, err)
 		}
@@ -194,7 +201,7 @@ func runDiscoverTraffic(args []string) error {
 		operationSets = append(operationSets, doc.Operations)
 	}
 
-	return writeMergedInventory(outPath, operationSets...)
+	return writeMergedInventory(outPath, allowEmpty, operationSets...)
 }
 
 func runDiscoverManual(args []string) error {
@@ -203,9 +210,11 @@ func runDiscoverManual(args []string) error {
 
 	var seedPaths multiValue
 	var outPath string
+	var allowEmpty bool
 
 	fs.Var(&seedPaths, "seed", "Manual YAML or JSON seed file path")
 	fs.StringVar(&outPath, "out", "", "Output path for canonical inventory JSON")
+	fs.BoolVar(&allowEmpty, "allow-empty", false, "Allow writing an inventory with zero operations")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -216,7 +225,7 @@ func runDiscoverManual(args []string) error {
 
 	var operationSets [][]inventory.Operation
 	for _, path := range seedPaths {
-		data, err := os.ReadFile(path)
+		data, err := readBoundedFile(path)
 		if err != nil {
 			return fmt.Errorf("seed %s: %w", path, err)
 		}
@@ -227,7 +236,7 @@ func runDiscoverManual(args []string) error {
 		operationSets = append(operationSets, doc.Operations)
 	}
 
-	return writeMergedInventory(outPath, operationSets...)
+	return writeMergedInventory(outPath, allowEmpty, operationSets...)
 }
 
 func runDiscoverActive(args []string) error {
@@ -237,10 +246,12 @@ func runDiscoverActive(args []string) error {
 	var baseURLs multiValue
 	var grpcReflectionTargets multiValue
 	var outPath string
+	var allowEmpty bool
 
 	fs.Var(&baseURLs, "base-url", "Base URL to probe for spec and GraphQL endpoints")
 	fs.Var(&grpcReflectionTargets, "grpc-reflection", "gRPC reflection target host:port")
 	fs.StringVar(&outPath, "out", "", "Output path for canonical inventory JSON")
+	fs.BoolVar(&allowEmpty, "allow-empty", false, "Allow writing an inventory with zero operations")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -271,7 +282,7 @@ func runDiscoverActive(args []string) error {
 		operationSets = append(operationSets, markGRPCReflectionActive(doc.Operations, target))
 	}
 
-	return writeMergedInventory(outPath, operationSets...)
+	return writeMergedInventory(outPath, allowEmpty, operationSets...)
 }
 
 func runDiscoverMerge(args []string) error {
@@ -312,8 +323,11 @@ func runDiscoverMerge(args []string) error {
 	return writeFile(outPath, append(data, '\n'))
 }
 
-func writeMergedInventory(outPath string, operationSets ...[]inventory.Operation) error {
+func writeMergedInventory(outPath string, allowEmpty bool, operationSets ...[]inventory.Operation) error {
 	merged := inventory.Merge(operationSets...)
+	if merged.Summary.Total == 0 && !allowEmpty {
+		return fmt.Errorf("discovery produced zero operations; pass --allow-empty to write an empty inventory")
+	}
 	data, err := merged.JSON()
 	if err != nil {
 		return err
@@ -378,6 +392,9 @@ func runScan(args []string) error {
 	var dryRun bool
 	var stateful bool
 	var allowWriteStateful bool
+	var allowWrite bool
+	var allowUnsafeRules bool
+	var allowLiveSSRF bool
 	var includeTargets multiValue
 	var excludeTargets multiValue
 	var authContexts multiValue
@@ -386,6 +403,7 @@ func runScan(args []string) error {
 	var concurrency int
 	var requestBudget int
 	var timeout time.Duration
+	var bodyCapture string
 	var followRedirects triStateBool
 
 	fs.StringVar(&configPath, "config", "", "Config file path")
@@ -399,6 +417,9 @@ func runScan(args []string) error {
 	fs.BoolVar(&dryRun, "dry-run", false, "Print what would be scanned without sending any requests")
 	fs.BoolVar(&stateful, "stateful", false, "Enable stateful authorization checks (BOLA001, BFLA001); requires at least two auth contexts")
 	fs.BoolVar(&allowWriteStateful, "allow-write-stateful", false, "Include mutating methods (POST/PUT/PATCH/DELETE) in stateful checks — use with caution")
+	fs.BoolVar(&allowWrite, "allow-write", false, "Allow mutating seed requests during scan execution")
+	fs.BoolVar(&allowUnsafeRules, "allow-unsafe-rules", false, "Allow destructive, crash, or resource-exhaustion rule probes")
+	fs.BoolVar(&allowLiveSSRF, "allow-live-ssrf", false, "Allow live metadata SSRF probes")
 	fs.Var(&includeTargets, "target", "Target name to include")
 	fs.Var(&excludeTargets, "exclude-target", "Target name to exclude")
 	fs.Var(&authContexts, "auth-context", "Auth context name to include")
@@ -407,6 +428,7 @@ func runScan(args []string) error {
 	fs.IntVar(&concurrency, "concurrency", 0, "Override scan concurrency")
 	fs.IntVar(&requestBudget, "request-budget", 0, "Override scan request budget")
 	fs.DurationVar(&timeout, "timeout", 0, "Override scan timeout")
+	fs.StringVar(&bodyCapture, "body-capture", "", "Body capture profile: redacted or full")
 	fs.Var(&followRedirects, "follow-redirects", "Follow HTTP redirects during scan execution")
 
 	if err := fs.Parse(args); err != nil {
@@ -426,7 +448,7 @@ func runScan(args []string) error {
 	if err != nil {
 		return err
 	}
-	applyScanOverrides(&cfg, concurrency, requestBudget, timeout, followRedirects)
+	applyScanOverrides(&cfg, concurrency, requestBudget, timeout, bodyCapture, followRedirects, allowWrite, allowUnsafeRules, allowLiveSSRF)
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -446,6 +468,9 @@ func runScan(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateLoginFlowAllowlist(cfg); err != nil {
+		return err
+	}
 	loginClient := &http.Client{
 		Timeout: cfg.Scan.Timeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -457,6 +482,7 @@ func runScan(args []string) error {
 		return err
 	}
 
+	sharedBudget := executor.NewRequestBudget(cfg.Scan.RequestBudget)
 	bundle, err := executor.Scan(context.Background(), cfg, inv, executor.ScanOptions{
 		IncludeTargets:    includeTargets,
 		ExcludeTargets:    excludeTargets,
@@ -465,6 +491,7 @@ func runScan(args []string) error {
 		Registry:          &registry,
 		IncludeOperations: includeOperations,
 		IncludeTags:       includeTags,
+		Budget:            sharedBudget,
 	})
 	if err != nil {
 		return err
@@ -476,13 +503,13 @@ func runScan(args []string) error {
 		storePath = strings.TrimSpace(cfg.Output.SeedStorePath)
 	}
 	if storePath != "" {
-		if err := captureSeeds(storePath, bundle); err != nil {
+		if err := captureSeeds(storePath, bundle, cfg.Scan.BodyCapture); err != nil {
 			return err
 		}
 	}
 
 	// Write evidence bundle.
-	data, err := bundle.JSON()
+	data, err := bundleOutputJSON(bundle, cfg.Scan.BodyCapture)
 	if err != nil {
 		return err
 	}
@@ -511,7 +538,12 @@ func runScan(args []string) error {
 		return nil
 	}
 	policy := executor.NewHTTPPolicy(cfg.Scan)
-	findings, err := rules.Scan(context.Background(), bundle.Results, registry, rules.DefaultRules(), policy, rules.ScanOptions{})
+	policy.Budget = sharedBudget
+	selectedRules := rules.SelectRules(rules.DefaultRules(), cfg.Scan.EnabledRules, cfg.Scan.DisabledRules, rules.RuleSafety{
+		AllowUnsafeRules: cfg.Scan.AllowUnsafeRules,
+		AllowLiveSSRF:    cfg.Scan.AllowLiveSSRF,
+	})
+	findings, err := rules.Scan(context.Background(), bundle.Results, registry, selectedRules, policy, rules.ScanOptions{})
 	if err != nil {
 		return err
 	}
@@ -561,8 +593,12 @@ func runScan(args []string) error {
 	}
 
 	// Findings JSON (flag > config).
+	findingsOutput := findings
+	if cfg.Scan.BodyCapture != "full" {
+		findingsOutput = rules.RedactFindings(findings)
+	}
 	fs2 := rules.FindingSet{
-		Findings: findings,
+		Findings: findingsOutput,
 		Summary:  rules.Summarize(findings),
 	}
 	findingsData, err := json.MarshalIndent(fs2, "", "  ")
@@ -603,7 +639,7 @@ func runScan(args []string) error {
 	return nil
 }
 
-func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, timeout time.Duration, followRedirects triStateBool) {
+func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, timeout time.Duration, bodyCapture string, followRedirects triStateBool, allowWrite bool, allowUnsafeRules bool, allowLiveSSRF bool) {
 	if cfg == nil {
 		return
 	}
@@ -616,9 +652,33 @@ func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, 
 	if timeout > 0 {
 		cfg.Scan.Timeout = timeout
 	}
+	if strings.TrimSpace(bodyCapture) != "" {
+		cfg.Scan.BodyCapture = strings.ToLower(strings.TrimSpace(bodyCapture))
+	}
 	if followRedirects.set {
 		cfg.Scan.FollowRedirects = followRedirects.value
 	}
+	if allowWrite {
+		cfg.Scan.AllowWrite = true
+	}
+	if allowUnsafeRules {
+		cfg.Scan.AllowUnsafeRules = true
+	}
+	if allowLiveSSRF {
+		cfg.Scan.AllowLiveSSRF = true
+	}
+}
+
+func validateLoginFlowAllowlist(cfg config.Config) error {
+	for _, authContext := range cfg.AuthContexts {
+		if authContext.Login == nil {
+			continue
+		}
+		if err := executor.ValidateURLAllowlist(authContext.Login.URL, cfg.Scan.TargetAllowlist); err != nil {
+			return fmt.Errorf("auth context %q login url: %w", authContext.Name, err)
+		}
+	}
+	return nil
 }
 
 type triStateBool struct {
@@ -728,9 +788,43 @@ func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+const maxInputFileBytes = 20 * 1024 * 1024
+
+func readBoundedFile(path string) ([]byte, error) {
+	if err := checkInputFileSize(path); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
+func checkInputFileSize(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() > maxInputFileBytes {
+		return fmt.Errorf("input %s exceeds %d byte limit", path, maxInputFileBytes)
+	}
+	return nil
+}
+
 // captureSeeds writes successful scan results to the seed store at storePath.
 // Existing records for the same (operation, auth context) pair are replaced.
-func captureSeeds(storePath string, bundle executor.Bundle) error {
+func bundleOutputJSON(bundle executor.Bundle, bodyCapture string) ([]byte, error) {
+	if bodyCapture == "full" {
+		return bundle.JSON()
+	}
+	return bundle.RedactedJSON()
+}
+
+func resultForSeedCapture(result executor.Result, bodyCapture string) executor.Result {
+	if bodyCapture == "full" {
+		return result
+	}
+	return result.Redacted()
+}
+
+func captureSeeds(storePath string, bundle executor.Bundle, bodyCapture string) error {
 	store, err := seed.LoadStoreFile(storePath)
 	if err != nil {
 		return err
@@ -740,21 +834,22 @@ func captureSeeds(storePath string, bundle executor.Bundle) error {
 		if result.Status != "succeeded" {
 			continue
 		}
+		captured := resultForSeedCapture(result, bodyCapture)
 		store.Add(seed.Record{
-			OperationID:     result.OperationID,
-			Locator:         result.Locator,
-			Protocol:        string(result.Protocol),
-			Target:          result.Target,
-			AuthContextName: result.AuthContextName,
-			Method:          result.Evidence.Request.Method,
-			URL:             result.Evidence.Request.URL,
-			Headers:         result.Evidence.Request.Headers,
-			Body:            result.Evidence.Request.Body,
-			ContentType:     result.Evidence.Request.ContentType,
-			GRPCMethod:      result.Evidence.Request.GRPCMethod,
-			Metadata:        result.Evidence.Request.Metadata,
-			ResponseStatus:  result.Evidence.Response.StatusCode,
-			GRPCCode:        result.Evidence.Response.GRPCCode,
+			OperationID:     captured.OperationID,
+			Locator:         captured.Locator,
+			Protocol:        string(captured.Protocol),
+			Target:          captured.Target,
+			AuthContextName: captured.AuthContextName,
+			Method:          captured.Evidence.Request.Method,
+			URL:             captured.Evidence.Request.URL,
+			Headers:         captured.Evidence.Request.Headers,
+			Body:            captured.Evidence.Request.Body,
+			ContentType:     captured.Evidence.Request.ContentType,
+			GRPCMethod:      captured.Evidence.Request.GRPCMethod,
+			Metadata:        captured.Evidence.Request.Metadata,
+			ResponseStatus:  captured.Evidence.Response.StatusCode,
+			GRPCCode:        captured.Evidence.Response.GRPCCode,
 			CapturedAt:      now,
 			Source:          "scan",
 		})

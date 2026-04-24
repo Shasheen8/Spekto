@@ -32,10 +32,10 @@ type sarifDriver struct {
 }
 
 type sarifRule struct {
-	ID               string             `json:"id"`
-	Name             string             `json:"name,omitempty"`
-	ShortDescription sarifText          `json:"shortDescription,omitempty"`
-	Properties       sarifRuleProps     `json:"properties,omitempty"`
+	ID               string         `json:"id"`
+	Name             string         `json:"name,omitempty"`
+	ShortDescription sarifText      `json:"shortDescription,omitempty"`
+	Properties       sarifRuleProps `json:"properties,omitempty"`
 }
 
 type sarifRuleProps struct {
@@ -48,10 +48,11 @@ type sarifText struct {
 }
 
 type sarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	Level     string          `json:"level"`
-	Message   sarifText       `json:"message"`
-	Locations []sarifLocation `json:"locations,omitempty"`
+	RuleID              string            `json:"ruleId"`
+	Level               string            `json:"level"`
+	Message             sarifText         `json:"message"`
+	Locations           []sarifLocation   `json:"locations,omitempty"`
+	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
 }
 
 type sarifLocation struct {
@@ -104,6 +105,9 @@ func SARIF(findings []rules.Finding) ([]byte, error) {
 			RuleID:  f.RuleID,
 			Level:   sarifLevel(f.Severity),
 			Message: sarifText{Text: desc},
+			PartialFingerprints: map[string]string{
+				"spektoFindingId": f.ID,
+			},
 		}
 		// Point the location at the probe URL when available, falling back to seed.
 		probeURL := f.Evidence.Seed.Request.URL

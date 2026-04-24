@@ -55,6 +55,7 @@ func DiscoverHTTPTarget(ctx context.Context, client *http.Client, baseURL string
 		}
 		doc, err := restdiscovery.ParseData(ctx, data, discoveredURL)
 		if err != nil {
+			warnings = append(warnings, err.Error())
 			continue
 		}
 		operationSets = append(operationSets, markActiveOperations(doc.Operations, discoveredURL, doc.SourceRef.ParserFamily, doc.SourceRef.SupportLevel, doc.SourceRef.Warnings))
@@ -72,6 +73,7 @@ func DiscoverHTTPTarget(ctx context.Context, client *http.Client, baseURL string
 		}
 		doc, err := graphqldiscovery.ParseData(data, discoveredURL)
 		if err != nil {
+			warnings = append(warnings, err.Error())
 			continue
 		}
 		operationSets = append(operationSets, markActiveOperations(doc.Operations, discoveredURL, doc.SourceRef.ParserFamily, doc.SourceRef.SupportLevel, doc.SourceRef.Warnings))
@@ -161,6 +163,7 @@ func normalizeBaseURL(raw string) (*url.URL, error) {
 }
 
 func resolveProbeURL(base *url.URL, path string) string {
-	probe := &url.URL{Path: path}
+	probePath := strings.TrimRight(base.EscapedPath(), "/") + "/" + strings.TrimLeft(path, "/")
+	probe := &url.URL{Path: probePath}
 	return base.ResolveReference(probe).String()
 }

@@ -45,6 +45,9 @@ func TLSScan(ctx context.Context, seeds []executor.Result, policy executor.HTTPP
 		}
 		seen[addr] = true
 
+		if policy.Budget != nil && !policy.Budget.Consume() {
+			continue
+		}
 		findings, err := tlsCheckHost(ctx, host, addr, seed, policy.Timeout)
 		if err != nil {
 			continue // unreachable or non-TLS host — skip silently
@@ -186,11 +189,11 @@ var riskyCipherSuites = map[uint16]bool{
 	// RC4
 	tls.TLS_RSA_WITH_RC4_128_SHA:       true,
 	tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA: true,
-	0x0004: true, // TLS_RSA_WITH_RC4_128_MD5
+	0x0004:                             true, // TLS_RSA_WITH_RC4_128_MD5
 	// 3DES
-	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:      true,
+	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:       true,
 	tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA: true,
-	0xC008: true, // TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA
+	0xC008:                                  true, // TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA
 }
 
 func isRiskyCipher(suite uint16) bool {
@@ -211,4 +214,3 @@ func tlsVersionName(v uint16) string {
 		return fmt.Sprintf("unknown (0x%04X)", v)
 	}
 }
-

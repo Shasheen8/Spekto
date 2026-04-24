@@ -4,7 +4,7 @@ import "testing"
 
 func TestMergeDedupesByIDAndCombinesMetadata(t *testing.T) {
 	a := NewRESTOperation("GET", "/v1/models/{id}")
-	a.Targets = []string{"https://api.example.com"}
+	a.Origins = []string{"https://api.example.com"}
 	a.SourceRefs = []SourceRef{{
 		Type:         SourceSpec,
 		Location:     "openapi.yaml",
@@ -20,7 +20,7 @@ func TestMergeDedupesByIDAndCombinesMetadata(t *testing.T) {
 	}
 
 	b := NewRESTOperation("GET", "/v1/models/{id}")
-	b.Targets = []string{"https://api-backup.example.com"}
+	b.Origins = []string{"https://api-backup.example.com"}
 	b.SourceRefs = []SourceRef{{
 		Type:         SourceTraffic,
 		Location:     "traffic.har",
@@ -40,8 +40,8 @@ func TestMergeDedupesByIDAndCombinesMetadata(t *testing.T) {
 		t.Fatalf("expected 1 merged operation, got %d", len(merged.Operations))
 	}
 	op := merged.Operations[0]
-	if len(op.Targets) != 2 {
-		t.Fatalf("expected merged targets, got %#v", op.Targets)
+	if len(op.Origins) != 2 {
+		t.Fatalf("expected merged origins, got %#v", op.Origins)
 	}
 	if len(op.SourceRefs) != 2 {
 		t.Fatalf("expected merged source refs, got %#v", op.SourceRefs)
@@ -96,5 +96,23 @@ func TestMergeMarksSpecifiedButUnseenAndObservedUndocumented(t *testing.T) {
 	}
 	if merged.Summary.SpecifiedButUnseenCount != 1 || merged.Summary.ObservedUndocumentedCount != 1 {
 		t.Fatalf("unexpected summary counts: %#v", merged.Summary)
+	}
+}
+
+func TestMergeAuthRequirementCannotBeDowngradedByOrder(t *testing.T) {
+	unauthenticated := NewRESTOperation("GET", "/v1/private")
+	unauthenticated.AuthHints = AuthHints{RequiresAuth: AuthRequirementNo}
+
+	authenticated := NewRESTOperation("GET", "/v1/private")
+	authenticated.AuthHints = AuthHints{RequiresAuth: AuthRequirementYes}
+
+	merged := Merge([]Operation{unauthenticated}, []Operation{authenticated})
+	if got := merged.Operations[0].AuthHints.RequiresAuth; got != AuthRequirementYes {
+		t.Fatalf("expected auth requirement yes to win, got %s", got)
+	}
+
+	merged = Merge([]Operation{authenticated}, []Operation{unauthenticated})
+	if got := merged.Operations[0].AuthHints.RequiresAuth; got != AuthRequirementYes {
+		t.Fatalf("expected auth requirement yes to win regardless of order, got %s", got)
 	}
 }

@@ -30,6 +30,7 @@ type ScanOptions struct {
 	// IncludeTags scopes the scan to operations carrying at least one of the given
 	// tags (case-insensitive OR logic). Empty = all operations.
 	IncludeTags []string
+	Budget      *RequestBudget
 }
 
 func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, options ScanOptions) (Bundle, error) {
@@ -67,6 +68,9 @@ func Scan(ctx context.Context, cfg config.Config, inv inventory.Inventory, optio
 	}
 
 	policy := NewHTTPPolicy(cfg.Scan)
+	if options.Budget != nil {
+		policy.Budget = options.Budget
+	}
 	bundle := Bundle{StartedAt: startedAt}
 
 	for _, target := range targets {
@@ -107,6 +111,10 @@ func scanRESTTarget(ctx context.Context, target config.Target, operations []inve
 	results := make([]Result, 0)
 
 	for _, operation := range operations {
+		if !policy.AllowWrite && operation.REST != nil && !isReadOnlyHTTPMethod(operation.REST.Method) {
+			results = append(results, skippedProtocolResult(target, operation, "", "skipped: mutating operation requires explicit write opt-in"))
+			continue
+		}
 		authContextNames, skipResult, err := resolveAuthAssignments(operation, target, registry, selectedAuthContexts)
 		if err != nil {
 			return nil, err
@@ -146,6 +154,10 @@ func scanGraphQLTarget(ctx context.Context, target config.Target, operations []i
 	results := make([]Result, 0)
 
 	for _, operation := range operations {
+		if !policy.AllowWrite && operation.GraphQL != nil && strings.EqualFold(operation.GraphQL.RootKind, "mutation") {
+			results = append(results, skippedProtocolResult(target, operation, "", "skipped: mutating operation requires explicit write opt-in"))
+			continue
+		}
 		authContextNames, skipResult, err := resolveAuthAssignments(operation, target, registry, selectedAuthContexts)
 		if err != nil {
 			return nil, err
@@ -225,7 +237,7 @@ func selectTargetOperations(operations []inventory.Operation, target config.Targ
 		if string(operation.Protocol) != target.Protocol {
 			continue
 		}
-		if len(operation.Targets) > 0 && !containsString(operation.Targets, target.Name) {
+		if (len(operation.Targets) > 0 || len(operation.Origins) > 0) && !operationMatchesTarget(operation, target) {
 			continue
 		}
 		if len(includeOps) > 0 && !operationMatchesAny(operation, includeOps) {
@@ -237,6 +249,45 @@ func selectTargetOperations(operations []inventory.Operation, target config.Targ
 		selected = append(selected, operation)
 	}
 	return selected
+}
+
+func operationMatchesTarget(operation inventory.Operation, target config.Target) bool {
+	targetValues := []string{target.Name}
+	if raw := strings.TrimSpace(target.BaseURL); raw != "" {
+		targetValues = append(targetValues, raw)
+	}
+	if raw := strings.TrimSpace(target.Endpoint); raw != "" {
+		targetValues = append(targetValues, raw)
+	}
+	if origin := targetOrigin(target); origin != "" {
+		targetValues = append(targetValues, origin)
+	}
+	for _, operationTarget := range append(append([]string{}, operation.Targets...), operation.Origins...) {
+		for _, targetValue := range targetValues {
+			if strings.EqualFold(strings.TrimRight(operationTarget, "/"), strings.TrimRight(targetValue, "/")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func targetOrigin(target config.Target) string {
+	rawURL := strings.TrimSpace(target.BaseURL)
+	if rawURL == "" {
+		rawURL = strings.TrimSpace(target.Endpoint)
+	}
+	if rawURL == "" {
+		return ""
+	}
+	if !strings.Contains(rawURL, "://") {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // operationMatchesAny returns true when the operation ID equals any pattern,
@@ -315,6 +366,15 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func isReadOnlyHTTPMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
 }
 
 // validateTargetAllowlist rejects any target whose host is not covered by the

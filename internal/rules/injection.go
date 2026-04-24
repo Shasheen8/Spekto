@@ -33,7 +33,7 @@ func pathInjectedURL(locator, rawURL, payload string) string {
 	mutated := false
 	for i, seg := range patternSegs {
 		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
-			actualSegs[i] = url.PathEscape(payload)
+			actualSegs[i] = payload
 			mutated = true
 		}
 	}
@@ -326,8 +326,8 @@ func (r *CommandInjection) Check(seed executor.Result, _ auth.Context) ([]Probe,
 var pathTraversalIndicators = []string{
 	"root:x:0:0", "daemon:", "/bin/bash", "/bin/sh",
 	"[boot loader]", "[operating systems]", // windows boot.ini
-	"[fonts]", "[extensions]",              // windows system.ini
-	"<html", "<!doctype",                  // serving static files unexpectedly
+	"[fonts]", "[extensions]", // windows system.ini
+	"<html", "<!doctype", // serving static files unexpectedly
 }
 
 // PathTraversal injects directory traversal sequences into path and query params.
@@ -390,9 +390,9 @@ func (r *PathTraversal) Check(seed executor.Result, _ auth.Context) ([]Probe, []
 
 var ssrfIndicators = []string{
 	"ami-id", "instance-type", "local-ipv4", "placement", // AWS metadata
-	"compute", "project-id", "zone", "service-accounts",  // GCP metadata
-	"windows azure", "api-version",                        // Azure metadata
-	"169.254.169.254",                                     // metadata IP echoed back
+	"compute", "project-id", "zone", "service-accounts", // GCP metadata
+	"windows azure", "api-version", // Azure metadata
+	"169.254.169.254", // metadata IP echoed back
 }
 
 // SSRFProbe injects cloud metadata service URLs into path and query params.

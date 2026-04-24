@@ -29,6 +29,12 @@ auth_contexts:
   #     - user
 
 scan:
+  safety_level: read_only
+  allow_write: false
+  allow_unsafe_rules: false
+  allow_live_ssrf: false
+  body_capture: redacted
+  follow_redirects: false
   concurrency: 4
   request_budget: 200
   timeout: 10s

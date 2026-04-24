@@ -65,9 +65,24 @@ func TestParseHARBuildsObservedOperations(t *testing.T) {
 	if len(postOp.Examples.RequestBodies) != 1 {
 		t.Fatalf("expected one request body example, got %#v", postOp.Examples.RequestBodies)
 	}
-	if postOp.Targets[0] != "https://api.example.com" {
-		t.Fatalf("unexpected target origin: %#v", postOp.Targets)
+	if postOp.Origins[0] != "https://api.example.com" {
+		t.Fatalf("unexpected origin: %#v", postOp.Origins)
 	}
+	if !hasExample(getOp.Examples.Parameters, "Authorization", "header", "[redacted]") {
+		t.Fatalf("expected authorization example to be redacted: %#v", getOp.Examples.Parameters)
+	}
+	if !hasExample(postOp.Examples.Parameters, "session", "cookie", "[redacted]") {
+		t.Fatalf("expected cookie example to be redacted: %#v", postOp.Examples.Parameters)
+	}
+}
+
+func hasExample(params []ParameterValue, name, in, example string) bool {
+	for _, param := range params {
+		if param.Name == name && param.In == in && param.Example == example {
+			return true
+		}
+	}
+	return false
 }
 
 func TestParseHARDeDupesRepeatedRequests(t *testing.T) {

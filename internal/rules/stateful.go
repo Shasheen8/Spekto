@@ -42,8 +42,8 @@ func StatefulScan(ctx context.Context, seeds []executor.Result, registry auth.Re
 	}
 
 	type probeSpec struct {
-		seed    executor.Result
-		altName string
+		seed     executor.Result
+		altName  string
 		readOnly bool
 	}
 
@@ -76,7 +76,7 @@ outer:
 			if altCtx.Name == seed.AuthContextName {
 				continue
 			}
-			key := seed.OperationID + ":" + altCtx.Name
+			key := seed.OperationID + ":" + seed.AuthContextName + ":" + altCtx.Name + ":" + seed.Evidence.Request.URL
 			if probed[key] {
 				continue
 			}

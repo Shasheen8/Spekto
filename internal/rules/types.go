@@ -104,9 +104,22 @@ func Summarize(findings []Finding) FindingSummary {
 	return s
 }
 
-// findingID returns a stable, deterministic ID for a (rule, operation) pair.
-func findingID(ruleID, operationID string) string {
-	key := strings.ToLower(ruleID + "|" + operationID)
+func RedactFindings(findings []Finding) []Finding {
+	out := make([]Finding, len(findings))
+	for i, finding := range findings {
+		out[i] = finding
+		out[i].Evidence.Seed = out[i].Evidence.Seed.Redacted()
+		if out[i].Evidence.Probe != nil {
+			probe := out[i].Evidence.Probe.Redacted()
+			out[i].Evidence.Probe = &probe
+		}
+	}
+	return out
+}
+
+// findingID returns a stable, deterministic ID for a rule variant.
+func findingID(ruleID string, parts ...string) string {
+	key := strings.ToLower(ruleID + "|" + strings.Join(parts, "|"))
 	sum := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("%s-%s", ruleID, hex.EncodeToString(sum[:4]))
 }
@@ -139,9 +152,9 @@ func cloneNonRedactedHeaders(h map[string]string) map[string]string {
 	return out
 }
 
-// probeSucceeded returns true when the probe got a 2xx or 3xx response.
+// probeSucceeded returns true when the probe got a 2xx response.
 func probeSucceeded(result executor.HTTPResult) bool {
-	return result.Error == "" && result.StatusCode >= 200 && result.StatusCode < 400
+	return result.Error == "" && result.StatusCode >= 200 && result.StatusCode < 300
 }
 
 // probeEvidence wraps an HTTPResult as FindingEvidence.Probe.
@@ -175,8 +188,15 @@ func newFinding(
 	cwe int,
 	remediation string,
 ) Finding {
+	fingerprintParts := []string{seed.Target, seed.OperationID, seed.Locator, seed.AuthContextName}
+	if evidence.Probe != nil {
+		fingerprintParts = append(fingerprintParts,
+			evidence.Probe.Request.Method,
+			evidence.Probe.Request.URL,
+		)
+	}
 	return Finding{
-		ID:              findingID(ruleID, seed.OperationID),
+		ID:              findingID(ruleID, fingerprintParts...),
 		RuleID:          ruleID,
 		Severity:        severity,
 		Confidence:      confidence,

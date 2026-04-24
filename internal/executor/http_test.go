@@ -123,7 +123,7 @@ func TestExecuteHTTPDoesNotRetryUnsafeMethods(t *testing.T) {
 	results, err := ExecuteHTTP(context.Background(), server.Client(), []HTTPRequest{{
 		Method: http.MethodPost,
 		URL:    server.URL,
-	}}, auth.Registry{}, HTTPPolicy{Concurrency: 1, RequestBudget: 1, Timeout: time.Second, Retries: 2})
+	}}, auth.Registry{}, HTTPPolicy{Concurrency: 1, RequestBudget: 3, Timeout: time.Second, Retries: 2})
 	if err != nil {
 		t.Fatalf("ExecuteHTTP returned error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestExecuteHTTPRetriesSafeMethods(t *testing.T) {
 	results, err := ExecuteHTTP(context.Background(), server.Client(), []HTTPRequest{{
 		Method: http.MethodGet,
 		URL:    server.URL,
-	}}, auth.Registry{}, HTTPPolicy{Concurrency: 1, RequestBudget: 1, Timeout: time.Second, Retries: 2})
+	}}, auth.Registry{}, HTTPPolicy{Concurrency: 1, RequestBudget: 3, Timeout: time.Second, Retries: 2})
 	if err != nil {
 		t.Fatalf("ExecuteHTTP returned error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestExecuteHTTPRetriesNetworkErrorsOnlyForSafeMethods(t *testing.T) {
 	_, err := ExecuteHTTP(context.Background(), client, []HTTPRequest{{
 		Method: http.MethodGet,
 		URL:    "https://api.example.com",
-	}}, auth.Registry{}, HTTPPolicy{Concurrency: 1, RequestBudget: 1, Timeout: time.Second, Retries: 1})
+	}}, auth.Registry{}, HTTPPolicy{Concurrency: 1, RequestBudget: 2, Timeout: time.Second, Retries: 1})
 	if err != nil {
 		t.Fatalf("ExecuteHTTP returned error: %v", err)
 	}
@@ -188,6 +188,40 @@ func TestExecuteHTTPRetriesNetworkErrorsOnlyForSafeMethods(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("expected one attempt for unsafe method network failure, got %d", attempts)
+	}
+}
+
+func TestExecuteHTTPRejectsRedirectOutsideAllowlist(t *testing.T) {
+	redirected := false
+	blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirected = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer blocked.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, blocked.URL, http.StatusFound)
+	}))
+	defer server.Close()
+
+	results, err := ExecuteHTTP(context.Background(), server.Client(), []HTTPRequest{{
+		Method: http.MethodGet,
+		URL:    server.URL,
+	}}, auth.Registry{}, HTTPPolicy{
+		Concurrency:     1,
+		RequestBudget:   2,
+		Timeout:         time.Second,
+		FollowRedirects: true,
+		TargetAllowlist: []string{"127.0.0.2"},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteHTTP returned error: %v", err)
+	}
+	if redirected {
+		t.Fatalf("redirect outside allowlist should not be followed")
+	}
+	if results[0].Error == "" {
+		t.Fatalf("expected redirect allowlist error")
 	}
 }
 

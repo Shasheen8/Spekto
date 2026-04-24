@@ -54,8 +54,8 @@ func TestParsePostmanBuildsObservedOperations(t *testing.T) {
 	if postOp.REST == nil || postOp.REST.RequestBody == nil {
 		t.Fatalf("expected request body metadata on POST operation")
 	}
-	if postOp.Targets[0] != "https://api.example.com" {
-		t.Fatalf("unexpected target: %#v", postOp.Targets)
+	if postOp.Origins[0] != "https://api.example.com" {
+		t.Fatalf("unexpected origin: %#v", postOp.Origins)
 	}
 }
 

@@ -257,8 +257,8 @@ func corruptBase64Tail(s string) string {
 	return s[:len(s)-1] + string(replacement)
 }
 
-// JWTKIDInjection checks whether the JWT kid header parameter is injectable.
-// A malicious kid value may cause path traversal or SQL injection in the key lookup.
+// JWTKIDInjection mutates the kid header and treats acceptance as a signature
+// verification failure variant. It does not prove KID lookup injection alone.
 type JWTKIDInjection struct{}
 
 func (r *JWTKIDInjection) ID() string { return "JWT005" }
@@ -295,10 +295,10 @@ func (r *JWTKIDInjection) Check(seed executor.Result, authCtx auth.Context) ([]P
 		probes = append(probes, buildJWTProbe(
 			r.ID(), kid, seed, tampered,
 			SeverityHigh,
-			"JWT KID injection",
-			"The server accepted a JWT with an injected 'kid' value of '"+kid+"', which may indicate the key ID is not validated before being used in a key lookup.",
+			"JWT signature accepted after KID mutation",
+			"The server accepted a JWT after the 'kid' header was changed to '"+kid+"'. This proves token verification is unsafe; investigate KID lookup handling separately before classifying this as lookup injection.",
 			"API2:2023 Broken Authentication", 347,
-			"Validate and allowlist JWT kid values. Never interpolate kid directly into filesystem paths or SQL queries.",
+			"Reject tokens whose signature no longer validates after header changes. Validate and allowlist JWT kid values before key lookup.",
 		))
 	}
 	return probes, nil

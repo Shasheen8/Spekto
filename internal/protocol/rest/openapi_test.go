@@ -177,8 +177,11 @@ components:
 	if getOp.AuthHints.RequiresAuth != inventory.AuthRequirementYes {
 		t.Fatalf("expected auth required, got %s", getOp.AuthHints.RequiresAuth)
 	}
-	if len(getOp.Targets) != 1 || getOp.Targets[0] != "https://api.example.com" {
-		t.Fatalf("unexpected targets: %#v", getOp.Targets)
+	if len(getOp.Targets) != 0 {
+		t.Fatalf("expected no configured targets in spec output, got %#v", getOp.Targets)
+	}
+	if len(getOp.Origins) != 1 || getOp.Origins[0] != "https://api.example.com" {
+		t.Fatalf("unexpected origins: %#v", getOp.Origins)
 	}
 
 	if postOp.REST == nil || postOp.REST.RequestBody == nil {
@@ -221,11 +224,46 @@ paths:
 		t.Fatalf("expected 1 operation, got %d", len(parsed.Operations))
 	}
 	op := parsed.Operations[0]
-	if len(op.Targets) != 1 || op.Targets[0] != "https://api.example.com/api" {
-		t.Fatalf("unexpected server candidates: %#v", op.Targets)
+	if len(op.Origins) != 1 || op.Origins[0] != "https://api.example.com/api" {
+		t.Fatalf("unexpected server candidates: %#v", op.Origins)
 	}
 	if op.REST == nil || op.REST.NormalizedPath != "/v1/health" {
 		t.Fatalf("unexpected normalized path")
+	}
+}
+
+func TestParseDataClassifiesSecuritySchemeComponents(t *testing.T) {
+	doc := `
+openapi: 3.1.0
+info:
+  title: Auth Scheme Test
+  version: 1.0.0
+paths:
+  /v1/private:
+    get:
+      security:
+        - customerAccess: []
+      responses:
+        "200":
+          description: ok
+components:
+  securitySchemes:
+    customerAccess:
+      type: apiKey
+      in: header
+      name: X-Customer-Access
+`
+
+	parsed, err := ParseData(context.Background(), []byte(doc), "spec.yaml")
+	if err != nil {
+		t.Fatalf("ParseData returned error: %v", err)
+	}
+	if len(parsed.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(parsed.Operations))
+	}
+	schemes := parsed.Operations[0].AuthHints.AuthSchemes
+	if len(schemes) != 1 || schemes[0] != inventory.AuthSchemeAPIKeyHeader {
+		t.Fatalf("expected api key header auth scheme, got %#v", schemes)
 	}
 }
 

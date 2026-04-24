@@ -93,6 +93,7 @@ type Operation struct {
 	Locator     string          `json:"locator"`
 	DisplayName string          `json:"display_name"`
 	Targets     []string        `json:"targets,omitempty"`
+	Origins     []string        `json:"origins,omitempty"`
 	SourceRefs  []SourceRef     `json:"source_refs,omitempty"`
 	Provenance  Provenance      `json:"provenance"`
 	Confidence  float64         `json:"confidence"`

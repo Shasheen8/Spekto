@@ -61,6 +61,7 @@ func (i Inventory) JSON() ([]byte, error) {
 func mergeOperation(a, b Operation) Operation {
 	out := a
 	out.Targets = uniqueStrings(append(out.Targets, b.Targets...))
+	out.Origins = uniqueStrings(append(out.Origins, b.Origins...))
 	out.SourceRefs = mergeSourceRefs(out.SourceRefs, b.SourceRefs)
 	out.Provenance.Specified = out.Provenance.Specified || b.Provenance.Specified
 	out.Provenance.Observed = out.Provenance.Observed || b.Provenance.Observed
@@ -129,15 +130,28 @@ func mergedConfidence(a, b float64, refs []SourceRef) float64 {
 
 func mergeAuthHints(a, b AuthHints) AuthHints {
 	out := a
-	if out.RequiresAuth == AuthRequirementUnknown {
-		out.RequiresAuth = b.RequiresAuth
-	}
+	out.RequiresAuth = strongestAuthRequirement(out.RequiresAuth, b.RequiresAuth)
 	out.AuthSchemes = uniqueAuthSchemes(append(out.AuthSchemes, b.AuthSchemes...))
 	out.AuthContextCandidates = uniqueStrings(append(out.AuthContextCandidates, b.AuthContextCandidates...))
 	if out.AuthSource == "" {
 		out.AuthSource = b.AuthSource
 	}
 	return out
+}
+
+func strongestAuthRequirement(a, b AuthRequirement) AuthRequirement {
+	rank := map[AuthRequirement]int{
+		AuthRequirementNo:      1,
+		AuthRequirementUnknown: 2,
+		AuthRequirementYes:     3,
+	}
+	if rank[b] > rank[a] {
+		return b
+	}
+	if a == "" {
+		return b
+	}
+	return a
 }
 
 func mergeSchemaRefs(a, b SchemaRefs) SchemaRefs {

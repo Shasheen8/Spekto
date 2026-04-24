@@ -28,22 +28,23 @@ type BundleSummary struct {
 // CoverageReport explains why each operation did or did not succeed.
 // It is intended to give operators clear signal on what is blocking coverage.
 type CoverageReport struct {
-	TotalOperations int            `json:"total_operations"`
-	Covered         int            `json:"covered"`
-	Uncovered       int            `json:"uncovered"`
-	ByReason        map[string]int `json:"by_reason,omitempty"`
-	Entries         []CoverageEntry `json:"entries,omitempty"`
+	TotalOperations   int             `json:"total_operations"`
+	ExecutionAttempts int             `json:"execution_attempts"`
+	Covered           int             `json:"covered"`
+	Uncovered         int             `json:"uncovered"`
+	ByReason          map[string]int  `json:"by_reason,omitempty"`
+	Entries           []CoverageEntry `json:"entries,omitempty"`
 }
 
 // CoverageEntry is one line of the coverage report for a single (operation, auth context) pair.
 type CoverageEntry struct {
-	OperationID     string `json:"operation_id"`
-	Locator         string `json:"locator"`
-	Protocol        string `json:"protocol"`
-	Target          string `json:"target"`
-	AuthContextName string `json:"auth_context_name,omitempty"`
-	Status          string `json:"status"`
-	BlockReason     string `json:"block_reason,omitempty"`
+	OperationID     string   `json:"operation_id"`
+	Locator         string   `json:"locator"`
+	Protocol        string   `json:"protocol"`
+	Target          string   `json:"target"`
+	AuthContextName string   `json:"auth_context_name,omitempty"`
+	Status          string   `json:"status"`
+	BlockReason     string   `json:"block_reason,omitempty"`
 	SchemaGaps      []string `json:"schema_gaps,omitempty"`
 }
 
@@ -94,6 +95,44 @@ func (b Bundle) JSON() ([]byte, error) {
 	return json.MarshalIndent(b, "", "  ")
 }
 
+func (b Bundle) RedactedJSON() ([]byte, error) {
+	redacted := b
+	redacted.Results = make([]Result, len(b.Results))
+	for i, result := range b.Results {
+		redacted.Results[i] = result.Redacted()
+	}
+	return json.MarshalIndent(redacted, "", "  ")
+}
+
+func (r Result) Redacted() Result {
+	out := r
+	out.Evidence = out.Evidence.Redacted()
+	return out
+}
+
+func (e Evidence) Redacted() Evidence {
+	out := e
+	out.Request.Body = redactedBodySnippet(out.Request.Body)
+	out.Response.Body = redactedBodySnippet(out.Response.Body)
+	return out
+}
+
+func redactedBodySnippet(body []byte) []byte {
+	if len(body) == 0 {
+		return nil
+	}
+	text := strings.ToLower(string(body))
+	for _, marker := range []string{"token", "secret", "password", "credential", "api_key", "apikey", "access_key", "private_key"} {
+		if strings.Contains(text, marker) {
+			return []byte("[redacted]")
+		}
+	}
+	if len(body) > 512 {
+		return append(append([]byte(nil), body[:512]...), []byte("...[truncated]")...)
+	}
+	return append([]byte(nil), body...)
+}
+
 func summarizeResults(results []Result) BundleSummary {
 	summary := BundleSummary{
 		Total:      len(results),
@@ -118,11 +157,18 @@ func summarizeResults(results []Result) BundleSummary {
 // buildCoverageReport classifies each result by block reason and assembles the report.
 func buildCoverageReport(results []Result) CoverageReport {
 	report := CoverageReport{
-		TotalOperations: len(results),
-		ByReason:        map[string]int{},
-		Entries:         make([]CoverageEntry, 0, len(results)),
+		ExecutionAttempts: len(results),
+		ByReason:          map[string]int{},
+		Entries:           make([]CoverageEntry, 0, len(results)),
 	}
+	operationStatus := map[string]string{}
 	for _, r := range results {
+		key := r.Target + "|" + r.OperationID
+		if r.Status == "succeeded" {
+			operationStatus[key] = "succeeded"
+		} else if operationStatus[key] == "" {
+			operationStatus[key] = "uncovered"
+		}
 		entry := CoverageEntry{
 			OperationID:     r.OperationID,
 			Locator:         r.Locator,
@@ -132,14 +178,19 @@ func buildCoverageReport(results []Result) CoverageReport {
 			Status:          r.Status,
 			SchemaGaps:      r.SchemaGaps,
 		}
-		if r.Status == "succeeded" {
-			report.Covered++
-		} else {
-			report.Uncovered++
+		if r.Status != "succeeded" {
 			entry.BlockReason = classifyBlockReason(r)
 			report.ByReason[entry.BlockReason]++
 		}
 		report.Entries = append(report.Entries, entry)
+	}
+	report.TotalOperations = len(operationStatus)
+	for _, status := range operationStatus {
+		if status == "succeeded" {
+			report.Covered++
+		} else {
+			report.Uncovered++
+		}
 	}
 	return report
 }

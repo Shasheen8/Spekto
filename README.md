@@ -132,7 +132,11 @@ Flags:
 - `--concurrency`
 - `--request-budget`
 - `--timeout`
+- `--body-capture` — `redacted` (default) or `full`
 - `--follow-redirects`
+- `--allow-write` — allow mutating seed requests; default scans skip `POST`, `PUT`, `PATCH`, `DELETE`
+- `--allow-unsafe-rules` — allow destructive, crash, and resource-exhaustion probes
+- `--allow-live-ssrf` — allow live cloud metadata SSRF probes
 - `--seed-store` — path to seed store JSON; captures successful requests
 - `--findings-out` — path to findings JSON; defaults to stderr summary when bundle goes to stdout
 - `--no-rules` — skip rule-based scanning after seeding
@@ -176,6 +180,12 @@ auth_contexts:
     bearer_token_env: PROD_TOKEN
 
 scan:
+  safety_level: read_only
+  allow_write: false
+  allow_unsafe_rules: false
+  allow_live_ssrf: false
+  body_capture: redacted
+  follow_redirects: false
   concurrency: 4
   request_budget: 200
   timeout: 5s
@@ -208,6 +218,8 @@ output:
 
 A full production config template is available at [`spekto.example.yaml`](spekto.example.yaml).
 
+By default, Spekto is read-only: mutating seed requests are skipped, unsafe rule probes are disabled, live metadata SSRF payloads are disabled, and evidence/findings output is redacted with bounded body snippets. Use the explicit opt-in flags above only against approved test targets.
+
 ## GitHub Actions
 
 A workflow file is available at [`.github/workflows/spekto-scan.yml`](.github/workflows/spekto-scan.yml).
@@ -228,6 +240,18 @@ Before a production scan, use `--dry-run` to verify configuration without sendin
 ./spekto scan --config spekto.yaml --inventory inventory.json --dry-run
 ```
 
+## Local Validation
+
+Before release or PR review, run:
+
+```bash
+go test ./...
+go vet ./...
+go test -race ./...
+go test -cover ./...
+govulncheck ./... # optional, when installed
+```
+
 ## Security Rules
 
 `scan` runs security rules automatically after seeding. Use `--no-rules` to skip.
@@ -240,7 +264,7 @@ Before a production scan, use `--dry-run` to verify configuration without sendin
 | JWT002 | JWT null signature | REST, GraphQL |
 | JWT003 | JWT blank HMAC secret | REST, GraphQL |
 | JWT004 | JWT weak HMAC secret (13 common values) | REST, GraphQL |
-| JWT005 | JWT KID injection | REST, GraphQL |
+| JWT005 | JWT signature accepted after KID mutation | REST, GraphQL |
 | JWT006 | JWT signature not verified | REST, GraphQL |
 | HDR001 | Security headers (HSTS, CSP, X-Frame-Options) | REST, GraphQL |
 | HDR002 | CORS misconfiguration | REST, GraphQL |

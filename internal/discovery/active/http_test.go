@@ -34,6 +34,30 @@ func TestDiscoverHTTPTargetFindsOpenAPISpec(t *testing.T) {
 	}
 }
 
+func TestDiscoverHTTPTargetRespectsBasePathPrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/openapi.json" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+		  "openapi":"3.1.0",
+		  "info":{"title":"Test","version":"1.0.0"},
+		  "paths":{"/models":{"get":{"responses":{"200":{"description":"ok"}}}}}
+		}`))
+	}))
+	defer server.Close()
+
+	doc, err := DiscoverHTTPTarget(context.Background(), server.Client(), server.URL+"/api/v2")
+	if err != nil {
+		t.Fatalf("DiscoverHTTPTarget returned error: %v", err)
+	}
+	if len(doc.Operations) != 1 {
+		t.Fatalf("expected 1 operation under base path, got %d", len(doc.Operations))
+	}
+}
+
 func TestDiscoverHTTPTargetFindsGraphQLIntrospection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/graphql" || r.Method != http.MethodPost {

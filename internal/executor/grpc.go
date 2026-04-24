@@ -40,7 +40,9 @@ func ExecuteGRPC(ctx context.Context, target config.Target, operations []invento
 	defer closeGRPCRuntimes(runtimes)
 
 	results := make([]Result, 0, len(operations))
-	requestsUsed := 0
+	if policy.Budget == nil {
+		policy.Budget = NewRequestBudget(policy.RequestBudget)
+	}
 
 	for _, operation := range operations {
 		authContextNames, skipResult, err := resolveAuthAssignments(operation, target, registry, selectedAuthContexts)
@@ -52,11 +54,10 @@ func ExecuteGRPC(ctx context.Context, target config.Target, operations []invento
 			continue
 		}
 		for _, authContextName := range authAssignments(authContextNames) {
-			if requestsUsed >= policy.RequestBudget {
+			if !policy.Budget.Consume() {
 				results = append(results, skippedProtocolResult(target, operation, authContextName, "skipped: request budget exceeded"))
 				continue
 			}
-			requestsUsed++
 
 			if limiter != nil {
 				if err := limiter.Wait(ctx); err != nil {
@@ -65,7 +66,9 @@ func ExecuteGRPC(ctx context.Context, target config.Target, operations []invento
 				}
 			}
 
-			runtime, err := grpcRuntimeForAuthContext(ctx, runtimes, target, registry, authContextName)
+			runtimeCtx, cancel := context.WithTimeout(ctx, policy.Timeout)
+			defer cancel()
+			runtime, err := grpcRuntimeForAuthContext(runtimeCtx, runtimes, target, registry, authContextName)
 			if err != nil {
 				results = append(results, failedProtocolResult(target, operation, authContextName, "", err))
 				continue

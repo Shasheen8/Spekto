@@ -7,6 +7,7 @@ import (
 )
 
 func TestLoadParsesConfigAndAppliesDefaults(t *testing.T) {
+	t.Setenv("TOGETHER_TOKEN", "token-1")
 	data := []byte(`
 targets:
   - name: rest-prod
@@ -40,6 +41,56 @@ output:
 	}
 	if cfg.Scan.Timeout != 5*time.Second {
 		t.Fatalf("expected default timeout, got %s", cfg.Scan.Timeout)
+	}
+}
+
+func TestLoadRejectsMissingSecretEnv(t *testing.T) {
+	data := []byte(`
+targets:
+  - name: rest-prod
+    protocol: rest
+    base_url: https://api.example.com
+auth_contexts:
+  - name: prod-bearer
+    bearer_token_env: MISSING_SPEKTO_TOKEN
+`)
+
+	if _, err := Load(data); err == nil {
+		t.Fatalf("expected missing secret env var to fail")
+	}
+}
+
+func TestValidateRejectsPlaintextAuthenticatedRESTTargetByDefault(t *testing.T) {
+	cfg := Config{
+		Targets: []Target{{
+			Name:         "rest",
+			Protocol:     "rest",
+			BaseURL:      "http://api.example.com",
+			AuthContexts: []string{"prod-bearer"},
+		}},
+		AuthContexts: []AuthContext{{Name: "prod-bearer", BearerToken: "token-1"}},
+	}
+	cfg.applyDefaults()
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected plaintext authenticated target to fail")
+	}
+}
+
+func TestValidateAllowsPlaintextAuthenticatedLoopbackTarget(t *testing.T) {
+	cfg := Config{
+		Targets: []Target{{
+			Name:         "rest",
+			Protocol:     "rest",
+			BaseURL:      "http://127.0.0.1:8080",
+			AuthContexts: []string{"prod-bearer"},
+		}},
+		AuthContexts: []AuthContext{{Name: "prod-bearer", BearerToken: "token-1"}},
+	}
+	cfg.applyDefaults()
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected loopback plaintext target to pass, got %v", err)
 	}
 }
 

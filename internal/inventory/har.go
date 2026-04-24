@@ -115,7 +115,7 @@ func harEntryOperation(entry harEntry, sourceRef SourceRef) (Operation, bool, er
 	op.Provenance = Provenance{Observed: true}
 	op.Confidence = 0.8
 	op.Status = StatusNormalized
-	op.Targets = uniqueStrings([]string{originURL(parsedURL)})
+	op.Origins = uniqueStrings([]string{originURL(parsedURL)})
 	op.DisplayName = op.Locator
 	op.REST = &RESTDetails{
 		Method:           method,
@@ -132,7 +132,7 @@ func harEntryOperation(entry harEntry, sourceRef SourceRef) (Operation, bool, er
 		op.Examples.Parameters = append(op.Examples.Parameters, ParameterValue{
 			Name:    header.Name,
 			In:      "header",
-			Example: header.Value,
+			Example: RedactExample(header.Name, "header", header.Value),
 		})
 	}
 	for _, query := range entry.Request.QueryString {
@@ -141,7 +141,7 @@ func harEntryOperation(entry harEntry, sourceRef SourceRef) (Operation, bool, er
 		op.Examples.Parameters = append(op.Examples.Parameters, ParameterValue{
 			Name:    query.Name,
 			In:      "query",
-			Example: query.Value,
+			Example: RedactExample(query.Name, "query", query.Value),
 		})
 	}
 	for _, cookie := range entry.Request.Cookies {
@@ -150,7 +150,7 @@ func harEntryOperation(entry harEntry, sourceRef SourceRef) (Operation, bool, er
 		op.Examples.Parameters = append(op.Examples.Parameters, ParameterValue{
 			Name:    cookie.Name,
 			In:      "cookie",
-			Example: cookie.Value,
+			Example: RedactExample(cookie.Name, "cookie", cookie.Value),
 		})
 	}
 
@@ -162,7 +162,7 @@ func harEntryOperation(entry harEntry, sourceRef SourceRef) (Operation, bool, er
 		}
 		op.Examples.RequestBodies = append(op.Examples.RequestBodies, ExampleValue{
 			MediaType: entry.Request.PostData.MimeType,
-			Value:     entry.Request.PostData.Text,
+			Value:     RedactBodyExample(entry.Request.PostData.Text),
 		})
 	}
 
