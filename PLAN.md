@@ -15,7 +15,7 @@
 | 1 | Canonical endpoint inventory | ✅ Complete |
 | 2 | Auth, sessions, and execution core | ✅ Complete |
 | 3 | Seed generation and coverage diagnostics | ✅ Complete |
-| 4 | REST vertical slice — 15 security rules | ✅ Complete |
+| 4 | REST vertical slice — first 15 security rules | ✅ Complete |
 | 5 | GraphQL coverage — 3 GraphQL rules, argument hints | ✅ Complete |
 | 6 | gRPC coverage — 4 gRPC rules | ✅ Complete |
 | 7 | Stateful authorization — BOLA001, BFLA001 | ✅ Complete |
@@ -1395,65 +1395,26 @@ and disclosure checks so the tool covers the complete set of API security issues
 
 #### 10.1 — Injection rules (INJ001–006)
 
-All injection rules follow the same pattern: take each successful seed, mutate
-path params, query params, and JSON body fields with payloads, and detect
-indicators in responses.
-
-- [ ] **INJ001: Server error on mutation** — flag when a seed mutation (any rule
-  probe) returns 5xx; signals a crash or unhandled exception
-- [ ] **INJ002: SQL injection** — send common SQL payloads (`' OR '1'='1`,
-  `1; DROP TABLE`, error-based probes); detect SQL error strings in responses
-- [ ] **INJ003: NoSQL injection** — send NoSQL operator payloads
-  (`{"$gt":""}`, `{"$where":"1==1"}`); detect unexpected 2xx or data exposure
-- [ ] **INJ004: Command injection** — send command payloads (`; id`, `| whoami`,
-  `` `sleep 5` ``); detect command output patterns or response-time anomalies
-- [ ] **INJ005: Path traversal** — send `../../etc/passwd` and URL-encoded
-  variants in path and query params; detect file content patterns in responses
-- [ ] **INJ006: SSRF** — inject internal addresses (`http://169.254.169.254/`,
-  `http://localhost`, RFC-1918 ranges) as URL-typed parameter values; detect
-  cloud metadata content or unexpected 2xx from internal origins
+- [x] **INJ001** — null body on write endpoints → 5xx = unhandled exception
+- [x] **INJ002** — SQL payload `' OR '1'='1` into path/query/body → SQL error strings in response
+- [x] **INJ003** — NoSQL `{"$gt":""}` operator injected into first string body field → response size increase signals filter bypass
+- [x] **INJ004** — `; id` into path/query → `uid=`/`gid=` output in response (payload changed from `echo` which was undetectable)
+- [x] **INJ005** — `../../etc/passwd` into query and body only (path params skipped — `url.PathEscape` encodes `/` as `%2F` preventing traversal via path segments)
+- [x] **INJ006** — `http://169.254.169.254/latest/meta-data/` into path/query → cloud metadata content in response
 
 #### 10.2 — Security / disclosure rules (SEC001–004)
 
-- [ ] **SEC001: Default credentials** — try common credential pairs
-  (`admin:admin`, `test:test`, `user:user`, empty password) against auth
-  endpoints identified in the inventory
-- [ ] **SEC002: Server crash** — structured 500-detection: flag any operation
-  where a rule probe returns 5xx when the seed returned 2xx, with response body
-  analysed for stack trace or crash indicators
-- [ ] **SEC003: PII / sensitive data disclosure** — scan successful seed
-  responses for regex patterns: credit card numbers, SSNs, private key headers
-  (`-----BEGIN RSA`), embedded JWTs, email addresses in contexts that suggest
-  leakage
-- [ ] **SEC004: Timeout / resource exhaustion** — probe with deeply nested JSON
-  payloads, long strings, and regex-triggering inputs; flag when response time
-  exceeds a configurable threshold (default 10×seed baseline)
+- [x] **SEC001** — 8 common basic-auth credential pairs tried against basic-auth endpoints; Authorization header built directly, no registry lookup needed
+- [x] **SEC002** — 3 crash payloads (50-level nested JSON, 8KB string, truncated JSON) against write endpoints → 5xx or stack trace content
+- [x] **SEC003** — static PII scan of seed responses: Visa/MC/Amex cards, SSNs, private key headers, embedded JWTs, AWS access keys; no probe sent
+- [x] **SEC004** — 100-level nested JSON against write endpoints → response time >5× seed baseline signals resource exhaustion
 
 #### 10.3 — TLS rules (TLS001–004)
 
-TLS rules inspect the raw TLS handshake using `crypto/tls` directly; they do
-not send HTTP requests. Probed once per unique HTTPS host per scan.
-
-- [ ] **TLS001: Weak TLS version** — detect TLS 1.0 or 1.1 (server accepts
-  handshake below TLS 1.2)
-- [ ] **TLS002: Broken or risky cipher suite** — detect export-grade ciphers,
-  NULL ciphers, RC4, DES, 3DES, or anonymous key exchange in the negotiated
-  cipher suite
-- [ ] **TLS003: Expired certificate** — flag when `Certificate.NotAfter` is in
-  the past
-- [ ] **TLS004: Invalid certificate chain** — flag when the server certificate
-  fails `x509.CertPool` verification against the system root store
-
-### Implementation Notes (planned)
-
-- Injection rules reuse the existing `Probe / Evaluate` pattern in `rules/`
-- Payload lists will be embedded as package-level `var` slices — no external files
-- TLS probes need a new `rules.TLSScan` orchestrator (similar to `GRPCScan`) since
-  they operate at the TLS layer, not HTTP
-- SEC003 PII patterns will be compiled `regexp.MustCompile` at package init
-- SEC004 timing probes require capturing the seed's baseline response time from
-  `Result.Duration` before comparing probe response time
-- All injection rules apply only to REST seeds; GraphQL injection deferred
+- [x] **TLS001** — force TLS 1.0/1.1 handshake via `MaxVersion: tls.VersionTLS11`; success = deprecated version accepted
+- [x] **TLS002** — inspect negotiated cipher suite against map of risky suites (NULL, RC4, 3DES, hex IDs for constants Go does not expose)
+- [x] **TLS003** — `x509.CertificateInvalidError.Reason == x509.Expired` checked before TLS004 to prevent misclassification
+- [x] **TLS004** — `errors.As` against `CertificateInvalidError`, `UnknownAuthorityError`, `HostnameError` after ruling out expiry
 
 ### Implementation Notes
 
