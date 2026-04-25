@@ -189,4 +189,3 @@ func authAssignments(names []string) []string {
 	}
 	return append([]string(nil), names...)
 }
-

@@ -10,15 +10,15 @@ import (
 // It extends the bundle's CoverageReport with per-auth-context breakdowns and
 // a deduplicated schema gap list for operator diagnostics.
 type CoverageSummary struct {
-	TotalOperations int                        `json:"total_operations"`
-	Succeeded       int                        `json:"succeeded"`
-	Failed          int                        `json:"failed"`
-	Skipped         int                        `json:"skipped"`
-	CoveragePct     float64                    `json:"coverage_pct"`
-	ByProtocol      map[string]ProtoBreakdown  `json:"by_protocol,omitempty"`
-	ByAuthContext   map[string]AuthBreakdown   `json:"by_auth_context,omitempty"`
-	ByReason        map[string]int             `json:"by_reason,omitempty"`
-	SchemaGaps      []SchemaGapEntry           `json:"schema_gaps,omitempty"`
+	TotalOperations int                       `json:"total_operations"`
+	Succeeded       int                       `json:"succeeded"`
+	Failed          int                       `json:"failed"`
+	Skipped         int                       `json:"skipped"`
+	CoveragePct     float64                   `json:"coverage_pct"`
+	ByProtocol      map[string]ProtoBreakdown `json:"by_protocol,omitempty"`
+	ByAuthContext   map[string]AuthBreakdown  `json:"by_auth_context,omitempty"`
+	ByReason        map[string]int            `json:"by_reason,omitempty"`
+	SchemaGaps      []SchemaGapEntry          `json:"schema_gaps,omitempty"`
 }
 
 // ProtoBreakdown aggregates coverage counts for a single protocol.
