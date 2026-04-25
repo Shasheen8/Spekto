@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,10 @@ import (
 	"github.com/Shasheen8/Spekto/internal/seed"
 )
 
+var version = "dev"
+
+const defaultScanOutDir = "spekto-artifacts"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -37,6 +42,9 @@ func run(args []string) error {
 		return usageError()
 	}
 	switch args[0] {
+	case "version", "--version":
+		fmt.Fprintln(os.Stdout, version)
+		return nil
 	case "discover":
 		if len(args) < 2 {
 			return fmt.Errorf("unsupported discover subcommand")
@@ -88,19 +96,30 @@ func runDiscoverSpec(args []string) error {
 		return err
 	}
 
+	merged, err := buildSpecInventory(openapiPaths, graphqlPaths, protoFiles, protoImportPaths, descriptorSets, grpcReflectionTargets)
+	if err != nil {
+		return err
+	}
+	if merged.Summary.Total == 0 && !allowEmpty {
+		return fmt.Errorf("discovery produced zero operations; pass --allow-empty to write an empty inventory")
+	}
+	return writeInventory(outPath, merged)
+}
+
+func buildSpecInventory(openapiPaths, graphqlPaths, protoFiles, protoImportPaths, descriptorSets, grpcReflectionTargets []string) (inventory.Inventory, error) {
 	if len(openapiPaths) == 0 && len(graphqlPaths) == 0 && len(protoFiles) == 0 && len(descriptorSets) == 0 && len(grpcReflectionTargets) == 0 {
-		return fmt.Errorf("discover spec requires at least one input source")
+		return inventory.Inventory{}, fmt.Errorf("spec discovery requires at least one input source")
 	}
 
 	var operationSets [][]inventory.Operation
 
 	for _, path := range openapiPaths {
 		if err := checkInputFileSize(path); err != nil {
-			return err
+			return inventory.Inventory{}, err
 		}
 		doc, err := restdiscovery.ParseFile(context.Background(), path)
 		if err != nil {
-			return fmt.Errorf("openapi %s: %w", path, err)
+			return inventory.Inventory{}, fmt.Errorf("openapi %s: %w", path, err)
 		}
 		operationSets = append(operationSets, doc.Operations)
 	}
@@ -108,11 +127,11 @@ func runDiscoverSpec(args []string) error {
 	for _, path := range graphqlPaths {
 		data, err := readBoundedFile(path)
 		if err != nil {
-			return fmt.Errorf("graphql schema %s: %w", path, err)
+			return inventory.Inventory{}, fmt.Errorf("graphql schema %s: %w", path, err)
 		}
 		doc, err := graphqldiscovery.ParseData(data, path)
 		if err != nil {
-			return fmt.Errorf("graphql schema %s: %w", path, err)
+			return inventory.Inventory{}, fmt.Errorf("graphql schema %s: %w", path, err)
 		}
 		operationSets = append(operationSets, doc.Operations)
 	}
@@ -120,14 +139,14 @@ func runDiscoverSpec(args []string) error {
 	for _, path := range descriptorSets {
 		doc, err := grpcdiscovery.ParseDescriptorSetFile(path)
 		if err != nil {
-			return fmt.Errorf("descriptor set %s: %w", path, err)
+			return inventory.Inventory{}, fmt.Errorf("descriptor set %s: %w", path, err)
 		}
 		operationSets = append(operationSets, doc.Operations)
 	}
 	for _, target := range grpcReflectionTargets {
 		doc, err := grpcdiscovery.ParseReflectionTarget(context.Background(), target)
 		if err != nil {
-			return fmt.Errorf("grpc reflection %s: %w", target, err)
+			return inventory.Inventory{}, fmt.Errorf("grpc reflection %s: %w", target, err)
 		}
 		operationSets = append(operationSets, doc.Operations)
 	}
@@ -139,12 +158,12 @@ func runDiscoverSpec(args []string) error {
 		}
 		doc, err := grpcdiscovery.ParseProtoFiles(protoImportPaths, normalizedFiles)
 		if err != nil {
-			return fmt.Errorf("proto files: %w", err)
+			return inventory.Inventory{}, fmt.Errorf("proto files: %w", err)
 		}
 		operationSets = append(operationSets, doc.Operations)
 	}
 
-	return writeMergedInventory(outPath, allowEmpty, operationSets...)
+	return inventory.Merge(operationSets...), nil
 }
 
 func runDiscoverTraffic(args []string) error {
@@ -317,10 +336,17 @@ func runDiscoverMerge(args []string) error {
 		return err
 	}
 	if outPath == "" {
-		_, err = os.Stdout.Write(append(data, '\n'))
+		if _, err = os.Stdout.Write(append(data, '\n')); err != nil {
+			return err
+		}
+		report.PrintDiscoverySummary(os.Stderr, merged, "stdout")
+		return nil
+	}
+	if err := writeFile(outPath, append(data, '\n')); err != nil {
 		return err
 	}
-	return writeFile(outPath, append(data, '\n'))
+	report.PrintDiscoverySummary(os.Stderr, merged, outPath)
+	return nil
 }
 
 func writeMergedInventory(outPath string, allowEmpty bool, operationSets ...[]inventory.Operation) error {
@@ -328,21 +354,32 @@ func writeMergedInventory(outPath string, allowEmpty bool, operationSets ...[]in
 	if merged.Summary.Total == 0 && !allowEmpty {
 		return fmt.Errorf("discovery produced zero operations; pass --allow-empty to write an empty inventory")
 	}
+	return writeInventory(outPath, merged)
+}
+
+func writeInventory(outPath string, merged inventory.Inventory) error {
 	data, err := merged.JSON()
 	if err != nil {
 		return err
 	}
 
 	if outPath == "" {
-		_, err = os.Stdout.Write(append(data, '\n'))
-		return err
+		if _, err = os.Stdout.Write(append(data, '\n')); err != nil {
+			return err
+		}
+		report.PrintDiscoverySummary(os.Stderr, merged, "stdout")
+		return nil
 	}
 
-	return writeFile(outPath, append(data, '\n'))
+	if err := writeFile(outPath, append(data, '\n')); err != nil {
+		return err
+	}
+	report.PrintDiscoverySummary(os.Stderr, merged, outPath)
+	return nil
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: spekto discover spec [...] | spekto discover traffic [--har path] [--postman path] [--access-log path] [--out file] | spekto discover manual [--seed file] [--out file] | spekto discover active [--base-url url] [--grpc-reflection host:port] [--out file] | spekto discover merge [--inventory file] [--out file] | spekto scan --config file --inventory file [--target name] [--exclude-target name] [--auth-context name] [--out file]")
+	return fmt.Errorf("usage: spekto version | spekto discover spec [...] | spekto discover traffic [--har path] [--postman path] [--access-log path] [--out file] | spekto discover manual [--seed file] [--out file] | spekto discover active [--base-url url] [--grpc-reflection host:port] [--out file] | spekto discover merge [--inventory file] [--out file] | spekto scan --config file (--inventory file | --openapi file) [--out-dir dir]")
 }
 
 type multiValue []string
@@ -383,11 +420,18 @@ func runScan(args []string) error {
 
 	var configPath string
 	var inventoryPath string
+	var outDir string
 	var outPath string
 	var findingsPath string
 	var sarifPath string
 	var coveragePath string
 	var seedStorePath string
+	var openapiPaths multiValue
+	var graphqlPaths multiValue
+	var protoFiles multiValue
+	var protoImportPaths multiValue
+	var descriptorSets multiValue
+	var grpcReflectionTargets multiValue
 	var noRules bool
 	var dryRun bool
 	var stateful bool
@@ -408,8 +452,15 @@ func runScan(args []string) error {
 
 	fs.StringVar(&configPath, "config", "", "Config file path")
 	fs.StringVar(&inventoryPath, "inventory", "", "Canonical inventory JSON file path")
+	fs.Var(&openapiPaths, "openapi", "OpenAPI or Swagger file path")
+	fs.Var(&graphqlPaths, "graphql-schema", "GraphQL SDL or introspection JSON file path")
+	fs.Var(&protoFiles, "proto", "Proto file path")
+	fs.Var(&protoImportPaths, "proto-import-path", "Proto import path")
+	fs.Var(&descriptorSets, "descriptor-set", "Protobuf descriptor set file path")
+	fs.Var(&grpcReflectionTargets, "grpc-reflection", "gRPC reflection target host:port")
+	fs.StringVar(&outDir, "out-dir", "", "Output directory for default scan artifacts")
 	fs.StringVar(&outPath, "out", "", "Output path for evidence bundle JSON")
-	fs.StringVar(&findingsPath, "findings-out", "", "Output path for findings JSON (default: prints to stdout when findings exist)")
+	fs.StringVar(&findingsPath, "findings-out", "", "Output path for findings JSON")
 	fs.StringVar(&sarifPath, "sarif-out", "", "Output path for SARIF findings (for GitHub Advanced Security)")
 	fs.StringVar(&coveragePath, "coverage-out", "", "Output path for coverage summary JSON")
 	fs.StringVar(&seedStorePath, "seed-store", "", "Path to seed store JSON file (captures successful requests)")
@@ -437,11 +488,21 @@ func runScan(args []string) error {
 	if strings.TrimSpace(configPath) == "" {
 		return fmt.Errorf("scan requires --config")
 	}
-	if strings.TrimSpace(inventoryPath) == "" {
-		return fmt.Errorf("scan requires --inventory")
+	hasSpecInput := hasScanSpecInput(openapiPaths, graphqlPaths, protoFiles, descriptorSets, grpcReflectionTargets)
+	if strings.TrimSpace(inventoryPath) == "" && !hasSpecInput {
+		return fmt.Errorf("scan requires --inventory or a spec input")
 	}
 	if allowWriteStateful && !stateful {
 		return fmt.Errorf("--allow-write-stateful requires --stateful")
+	}
+	effectiveOutDir := strings.TrimSpace(outDir)
+	if effectiveOutDir == "" && hasSpecInput {
+		effectiveOutDir = defaultScanOutDir
+	}
+	if effectiveOutDir != "" {
+		if err := os.MkdirAll(effectiveOutDir, 0o700); err != nil {
+			return err
+		}
 	}
 
 	cfg, err := config.LoadFile(configPath)
@@ -453,13 +514,13 @@ func runScan(args []string) error {
 		return err
 	}
 
-	inv, err := inventory.LoadInventoryFile(inventoryPath)
+	inv, inventoryArtifactPath, err := loadScanInventory(inventoryPath, openapiPaths, graphqlPaths, protoFiles, protoImportPaths, descriptorSets, grpcReflectionTargets, effectiveOutDir)
 	if err != nil {
 		return err
 	}
 
 	if dryRun {
-		return printDryRun(cfg, inv, includeTargets, excludeTargets, stateful)
+		return printDryRun(cfg, inv, includeTargets, excludeTargets, includeOperations, includeTags, stateful)
 	}
 
 	// Build and resolve the auth registry once so both the seed scan and rule
@@ -520,6 +581,8 @@ func runScan(args []string) error {
 			outputPath = cfg.Output.EvidencePath
 		case strings.TrimSpace(cfg.Output.JSONPath) != "":
 			outputPath = cfg.Output.JSONPath
+		case effectiveOutDir != "":
+			outputPath = filepath.Join(effectiveOutDir, "evidence.json")
 		}
 	}
 	bundleToStdout := outputPath == ""
@@ -532,9 +595,49 @@ func runScan(args []string) error {
 			return err
 		}
 	}
+	artifacts := []report.Artifact{}
+	if inventoryArtifactPath != "" {
+		artifacts = append(artifacts, report.Artifact{Kind: "inventory", Path: inventoryArtifactPath})
+	}
+	if !bundleToStdout {
+		artifacts = append(artifacts, report.Artifact{Kind: "evidence", Path: outputPath})
+	}
+	if storePath != "" {
+		artifacts = append(artifacts, report.Artifact{Kind: "seeds", Path: storePath})
+	}
+
+	// Coverage summary JSON (flag > config).
+	covPath := strings.TrimSpace(coveragePath)
+	if covPath == "" {
+		covPath = strings.TrimSpace(cfg.Output.CoveragePath)
+	}
+	if covPath == "" && effectiveOutDir != "" {
+		covPath = filepath.Join(effectiveOutDir, "coverage.json")
+	}
+	if covPath != "" {
+		cov := report.BuildCoverageSummary(bundle)
+		covData, err := cov.JSON()
+		if err != nil {
+			return err
+		}
+		if err := writeFile(covPath, append(covData, '\n')); err != nil {
+			return err
+		}
+		artifacts = append(artifacts, report.Artifact{Kind: "coverage", Path: covPath})
+	}
 
 	// Rule-based scanning (skipped when --no-rules is set).
 	if noRules {
+		if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), nil, cfg.Scan.BodyCapture, &artifacts); err != nil {
+			return err
+		}
+		if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), nil, &artifacts); err != nil {
+			return err
+		}
+		report.PrintSummaryWithOptions(os.Stderr, bundle, nil, report.SummaryOptions{
+			RulesSkipped: true,
+			Artifacts:    artifacts,
+		})
 		return nil
 	}
 	policy := executor.NewHTTPPolicy(cfg.Scan)
@@ -569,72 +672,29 @@ func runScan(args []string) error {
 		findings = append(findings, statefulFindings...)
 	}
 
-	// Human-readable summary always goes to stderr.
-	report.PrintSummary(os.Stderr, bundle, findings)
-
-	// Coverage summary JSON (flag > config).
-	covPath := strings.TrimSpace(coveragePath)
-	if covPath == "" {
-		covPath = strings.TrimSpace(cfg.Output.CoveragePath)
-	}
-	if covPath != "" {
-		cov := report.BuildCoverageSummary(bundle)
-		covData, err := cov.JSON()
-		if err != nil {
-			return err
-		}
-		if err := writeFile(covPath, append(covData, '\n')); err != nil {
-			return err
-		}
-	}
-
 	if len(findings) == 0 {
+		if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), findings, cfg.Scan.BodyCapture, &artifacts); err != nil {
+			return err
+		}
+		if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), findings, &artifacts); err != nil {
+			return err
+		}
+		report.PrintSummaryWithOptions(os.Stderr, bundle, findings, report.SummaryOptions{
+			Artifacts: artifacts,
+		})
 		return nil
 	}
 
-	// Findings JSON (flag > config).
-	findingsOutput := findings
-	if cfg.Scan.BodyCapture != "full" {
-		findingsOutput = rules.RedactFindings(findings)
-	}
-	fs2 := rules.FindingSet{
-		Findings: findingsOutput,
-		Summary:  rules.Summarize(findings),
-	}
-	findingsData, err := json.MarshalIndent(fs2, "", "  ")
-	if err != nil {
+	if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), findings, cfg.Scan.BodyCapture, &artifacts); err != nil {
 		return err
 	}
-	findingsData = append(findingsData, '\n')
-
-	fPath := strings.TrimSpace(findingsPath)
-	if fPath == "" {
-		fPath = strings.TrimSpace(cfg.Output.FindingsPath)
-	}
-	if fPath != "" {
-		if err := writeFile(fPath, findingsData); err != nil {
-			return err
-		}
-	} else if !bundleToStdout {
-		if _, err = os.Stdout.Write(findingsData); err != nil {
-			return err
-		}
+	if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), findings, &artifacts); err != nil {
+		return err
 	}
 
-	// SARIF (flag > config).
-	sPath := strings.TrimSpace(sarifPath)
-	if sPath == "" {
-		sPath = strings.TrimSpace(cfg.Output.SARIFPath)
-	}
-	if sPath != "" {
-		sarifData, err := report.SARIF(findings)
-		if err != nil {
-			return err
-		}
-		if err := writeFile(sPath, append(sarifData, '\n')); err != nil {
-			return err
-		}
-	}
+	report.PrintSummaryWithOptions(os.Stderr, bundle, findings, report.SummaryOptions{
+		Artifacts: artifacts,
+	})
 
 	return nil
 }
@@ -667,6 +727,117 @@ func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, 
 	if allowLiveSSRF {
 		cfg.Scan.AllowLiveSSRF = true
 	}
+}
+
+func hasScanSpecInput(openapiPaths, graphqlPaths, protoFiles, descriptorSets, grpcReflectionTargets []string) bool {
+	return len(openapiPaths) > 0 ||
+		len(graphqlPaths) > 0 ||
+		len(protoFiles) > 0 ||
+		len(descriptorSets) > 0 ||
+		len(grpcReflectionTargets) > 0
+}
+
+func loadScanInventory(inventoryPath string, openapiPaths, graphqlPaths, protoFiles, protoImportPaths, descriptorSets, grpcReflectionTargets []string, outDir string) (inventory.Inventory, string, error) {
+	inventories := []inventory.Inventory{}
+	if strings.TrimSpace(inventoryPath) != "" {
+		inv, err := inventory.LoadInventoryFile(inventoryPath)
+		if err != nil {
+			return inventory.Inventory{}, "", err
+		}
+		inventories = append(inventories, inv)
+	}
+
+	hasSpecInput := hasScanSpecInput(openapiPaths, graphqlPaths, protoFiles, descriptorSets, grpcReflectionTargets)
+	if hasSpecInput {
+		inv, err := buildSpecInventory(openapiPaths, graphqlPaths, protoFiles, protoImportPaths, descriptorSets, grpcReflectionTargets)
+		if err != nil {
+			return inventory.Inventory{}, "", err
+		}
+		inventories = append(inventories, inv)
+	}
+
+	merged := inventory.MergeInventories(inventories...)
+	inventoryArtifactPath := ""
+	if strings.TrimSpace(outDir) != "" {
+		inventoryArtifactPath = filepath.Join(outDir, "inventory.json")
+		data, err := merged.JSON()
+		if err != nil {
+			return inventory.Inventory{}, "", err
+		}
+		if err := writeFile(inventoryArtifactPath, append(data, '\n')); err != nil {
+			return inventory.Inventory{}, "", err
+		}
+	}
+	if hasSpecInput {
+		report.PrintDiscoverySummary(os.Stderr, merged, inventoryArtifactPath)
+	}
+	return merged, inventoryArtifactPath, nil
+}
+
+func defaultFindingsPath(flagPath, configPath, outDir string) string {
+	if path := strings.TrimSpace(flagPath); path != "" {
+		return path
+	}
+	if path := strings.TrimSpace(configPath); path != "" {
+		return path
+	}
+	if strings.TrimSpace(outDir) != "" {
+		return filepath.Join(outDir, "findings.json")
+	}
+	return ""
+}
+
+func defaultSARIFPath(flagPath, configPath, outDir string) string {
+	if path := strings.TrimSpace(flagPath); path != "" {
+		return path
+	}
+	if path := strings.TrimSpace(configPath); path != "" {
+		return path
+	}
+	if strings.TrimSpace(outDir) != "" {
+		return filepath.Join(outDir, "spekto.sarif")
+	}
+	return ""
+}
+
+func writeFindingsArtifact(path string, findings []rules.Finding, bodyCapture string, artifacts *[]report.Artifact) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	findingsOutput := findings
+	if bodyCapture != "full" {
+		findingsOutput = rules.RedactFindings(findings)
+	}
+	fs := rules.FindingSet{
+		Findings: findingsOutput,
+		Summary:  rules.Summarize(findings),
+	}
+	data, err := json.MarshalIndent(fs, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := writeFile(path, append(data, '\n')); err != nil {
+		return err
+	}
+	*artifacts = append(*artifacts, report.Artifact{Kind: "findings", Path: path})
+	return nil
+}
+
+func writeSARIFArtifact(path string, findings []rules.Finding, artifacts *[]report.Artifact) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	data, err := report.SARIF(findings)
+	if err != nil {
+		return err
+	}
+	if err := writeFile(path, append(data, '\n')); err != nil {
+		return err
+	}
+	*artifacts = append(*artifacts, report.Artifact{Kind: "sarif", Path: path})
+	return nil
 }
 
 func validateLoginFlowAllowlist(cfg config.Config) error {
@@ -713,7 +884,7 @@ func (b *triStateBool) Set(value string) error {
 }
 
 // printDryRun prints what would be scanned without executing any requests.
-func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, excludeTargets []string, stateful bool) error {
+func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, excludeTargets, includeOperations, includeTags []string, stateful bool) error {
 	fmt.Fprintln(os.Stderr, "Spekto dry run — no requests will be sent")
 
 	targets, err := cfg.SelectTargetsFiltered(includeTargets, excludeTargets)
@@ -729,11 +900,12 @@ func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, exc
 		fmt.Fprintf(os.Stderr, "  %-20s %s  %s\n", t.Name, strings.ToUpper(t.Protocol), addr)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInventory (%d operations):\n", inv.Summary.Total)
+	selectedOperations := filterDryRunOperations(inv.Operations, targets, includeTargets, excludeTargets, includeOperations, includeTags)
+	fmt.Fprintf(os.Stderr, "\nInventory (%d of %d operations selected):\n", len(selectedOperations), inv.Summary.Total)
 	shown := 0
-	for _, op := range inv.Operations {
+	for _, op := range selectedOperations {
 		if shown >= 20 {
-			fmt.Fprintf(os.Stderr, "  ... and %d more\n", inv.Summary.Total-shown)
+			fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(selectedOperations)-shown)
 			break
 		}
 		authReq := string(op.AuthHints.RequiresAuth)
@@ -778,6 +950,119 @@ func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, exc
 		fmt.Fprintf(os.Stderr, "Allowlist: %s\n", strings.Join(cfg.Scan.TargetAllowlist, ", "))
 	}
 	return nil
+}
+
+func filterDryRunOperations(operations []inventory.Operation, targets []config.Target, includeTargets, excludeTargets, includeOperations, includeTags []string) []inventory.Operation {
+	filtered := make([]inventory.Operation, 0, len(operations))
+	targetFilterSet := len(includeTargets) > 0 || len(excludeTargets) > 0
+	for _, op := range operations {
+		if targetFilterSet && !dryRunOperationMatchesAnyTarget(op, targets) {
+			continue
+		}
+		if !dryRunOperationMatchesAny(op, includeOperations) {
+			continue
+		}
+		if !dryRunOperationHasAnyTag(op, includeTags) {
+			continue
+		}
+		filtered = append(filtered, op)
+	}
+	return filtered
+}
+
+func dryRunOperationMatchesAny(op inventory.Operation, filters []string) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	haystacks := []string{
+		strings.ToLower(op.ID),
+		strings.ToLower(op.Locator),
+		strings.ToLower(op.DisplayName),
+	}
+	for _, filter := range filters {
+		needle := strings.ToLower(strings.TrimSpace(filter))
+		if needle == "" {
+			continue
+		}
+		for _, haystack := range haystacks {
+			if strings.Contains(haystack, needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dryRunOperationHasAnyTag(op inventory.Operation, tags []string) bool {
+	if len(tags) == 0 {
+		return true
+	}
+	for _, want := range tags {
+		want = strings.ToLower(strings.TrimSpace(want))
+		if want == "" {
+			continue
+		}
+		for _, tag := range op.Tags {
+			if strings.ToLower(strings.TrimSpace(tag)) == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dryRunOperationMatchesAnyTarget(op inventory.Operation, targets []config.Target) bool {
+	if len(targets) == 0 {
+		return false
+	}
+	for _, target := range targets {
+		if dryRunOperationMatchesTarget(op, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func dryRunOperationMatchesTarget(op inventory.Operation, target config.Target) bool {
+	if string(op.Protocol) != target.Protocol {
+		return false
+	}
+	if len(op.Targets) == 0 && len(op.Origins) == 0 {
+		return true
+	}
+	targetValues := []string{target.Name}
+	if raw := strings.TrimSpace(target.BaseURL); raw != "" {
+		targetValues = append(targetValues, raw)
+	}
+	if raw := strings.TrimSpace(target.Endpoint); raw != "" {
+		targetValues = append(targetValues, raw)
+	}
+	if origin := dryRunTargetOrigin(target); origin != "" {
+		targetValues = append(targetValues, origin)
+	}
+	for _, operationTarget := range append(append([]string{}, op.Targets...), op.Origins...) {
+		for _, targetValue := range targetValues {
+			if strings.EqualFold(strings.TrimRight(operationTarget, "/"), strings.TrimRight(targetValue, "/")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dryRunTargetOrigin(target config.Target) string {
+	rawURL := strings.TrimSpace(target.BaseURL)
+	if rawURL == "" {
+		rawURL = strings.TrimSpace(target.Endpoint)
+	}
+	if rawURL == "" || !strings.Contains(rawURL, "://") {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // writeFile removes any existing file at path before writing data with 0600

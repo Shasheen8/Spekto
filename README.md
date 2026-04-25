@@ -29,11 +29,49 @@ Current runtime limits:
 go build -o spekto ./cmd/spekto
 ```
 
+Release builds set the version with ldflags:
+
+```bash
+go build -trimpath -ldflags="-s -w -X main.version=v1.1" -o spekto ./cmd/spekto
+```
+
+## Install
+
+From source:
+
+```bash
+go install github.com/Shasheen8/Spekto/cmd/spekto@latest
+```
+
+From a release archive:
+
+```bash
+version=v1.1
+curl -fsSL "https://github.com/Shasheen8/Spekto/releases/download/${version}/spekto_${version}_linux_amd64.tar.gz" -o spekto.tar.gz
+curl -fsSL "https://github.com/Shasheen8/Spekto/releases/download/${version}/checksums.txt" -o checksums.txt
+grep " spekto_${version}_linux_amd64.tar.gz$" checksums.txt | sha256sum -c -
+tar -xzf spekto.tar.gz
+install -m 0755 "spekto_${version}_linux_amd64/spekto" /usr/local/bin/spekto
+```
+
 ## Commands
+
+### `version`
+
+Print the Spekto version. Local builds print `dev`; release builds set this at
+build time.
+
+```bash
+./spekto version
+./spekto --version
+```
 
 ### `discover spec`
 
-Build canonical inventory from protocol-native inputs.
+Build canonical inventory from protocol-native inputs. Discovery writes the
+inventory JSON artifact and prints a complete operation list to stderr by
+default, including method counts and each operation's documented response
+status codes, so operators can immediately see every endpoint Spekto found.
 
 Flags:
 
@@ -123,7 +161,14 @@ Execute scoped requests, capture seeds, and run security rules.
 Flags:
 
 - `--config`
-- `--inventory`
+- `--inventory` — canonical inventory JSON file path; advanced/reproducible path
+- `--openapi` — OpenAPI or Swagger file path; runs discovery before scanning
+- `--graphql-schema` — GraphQL SDL or introspection JSON file path
+- `--proto`
+- `--proto-import-path`
+- `--descriptor-set`
+- `--grpc-reflection`
+- `--out-dir` — default artifact directory for scan outputs; defaults to `spekto-artifacts` when scanning from spec inputs
 - `--target` — target name to include (repeatable)
 - `--exclude-target` — target name to exclude (repeatable)
 - `--auth-context` — auth context name to include (repeatable)
@@ -138,7 +183,7 @@ Flags:
 - `--allow-unsafe-rules` — allow destructive, crash, and resource-exhaustion probes
 - `--allow-live-ssrf` — allow live cloud metadata SSRF probes
 - `--seed-store` — path to seed store JSON; captures successful requests
-- `--findings-out` — path to findings JSON; defaults to stderr summary when bundle goes to stdout
+- `--findings-out` — path to findings JSON; otherwise findings are shown in the stderr summary only
 - `--no-rules` — skip rule-based scanning after seeding
 - `--stateful` — enable stateful authorization checks (BOLA001, BFLA001); requires ≥2 auth contexts
 - `--allow-write-stateful` — include mutating methods in stateful checks (use with caution)
@@ -147,9 +192,21 @@ Flags:
 - `--dry-run` — print what would be scanned without sending any requests
 - `--out`
 
+`scan` always prints a human-readable summary to stderr with seeded coverage, findings, skipped-rule state, and artifact paths. Use `--findings-out` when CI needs machine-readable findings JSON.
+
 Example:
 
 ```bash
+./spekto scan \
+  --config spekto.yaml \
+  --openapi openapi.yaml \
+  --out-dir spekto-artifacts
+```
+
+Advanced/reproducible two-step flow:
+
+```bash
+./spekto discover spec --openapi openapi.yaml --out inventory.json
 ./spekto scan \
   --config spekto.yaml \
   --inventory inventory.json \
@@ -222,22 +279,51 @@ By default, Spekto is read-only: mutating seed requests are skipped, unsafe rule
 
 ## GitHub Actions
 
-A workflow file is available at [`.github/workflows/spekto-scan.yml`](.github/workflows/spekto-scan.yml).
+Downstream repositories should use the short scan form in CI:
 
-It runs on a weekly schedule and supports manual dispatch with `--target`, `--operation`, and `--no-rules` inputs. Dispatch inputs are passed via environment variables to prevent command injection. Bearer tokens are injected from repository secrets.
+```bash
+spekto scan --config spekto.yaml --openapi openapi.yaml
+```
 
-To use:
-1. Copy `spekto.example.yaml` to `spekto.yaml` and configure your targets
-2. Place your inventory file at `inventory.json` (or generate it with `discover spec`)
-3. Add `PROD_BEARER_TOKEN` to repository secrets
-4. Enable the workflow
+That command runs discovery in-process, writes default artifacts to
+`spekto-artifacts/`, and keeps `--inventory` available for advanced workflows
+that need a precomputed canonical inventory.
+
+The reusable workflow should pass secrets through environment variables and
+avoid printing generated config files. Bearer tokens are typically exposed as
+`PROD_BEARER_TOKEN` and referenced from `spekto.yaml` with `bearer_token_env`.
+
+Example downstream workflow:
+
+```yaml
+name: Spekto API Security
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  scan:
+    uses: Shasheen8/Spekto/.github/workflows/spekto-reusable.yml@v1.1
+    with:
+      spekto_version: v1.1
+      openapi: openapi.yaml
+      target_name: rest-prod
+      protocol: rest
+      base_url: https://api.example.com
+      operation: ''
+      no_rules: false
+      upload_sarif: true
+    secrets:
+      bearer_token: ${{ secrets.PROD_BEARER_TOKEN }}
+```
 
 ## Pre-flight check
 
 Before a production scan, use `--dry-run` to verify configuration without sending requests:
 
 ```bash
-./spekto scan --config spekto.yaml --inventory inventory.json --dry-run
+./spekto scan --config spekto.yaml --openapi openapi.yaml --dry-run
 ```
 
 ## Local Validation
@@ -318,7 +404,7 @@ locators, provenance flags, confidence scores, auth hints, schema references,
 protocol-specific metadata, and derived signals (`specified_but_unseen`,
 `observed_but_undocumented`).
 
-`scan` writes two outputs:
+`scan` writes structured artifacts when paths are configured:
 
 **Evidence bundle** (`--out`):
 - target and protocol per result
@@ -328,7 +414,7 @@ protocol-specific metadata, and derived signals (`specified_but_unseen`,
 - schema gaps — parameter names where only a type fallback was used
 - summary and coverage report with per-result block reason classification
 
-**Findings** (`--findings-out`):
+**Findings** (`--findings-out`, optional):
 - rule ID, severity, and confidence
 - OWASP API Top 10 category and CWE
 - seed evidence (the baseline request that succeeded)
@@ -336,7 +422,7 @@ protocol-specific metadata, and derived signals (`specified_but_unseen`,
 - remediation guidance
 - summary by severity and rule
 
-A human-readable summary is always printed to stderr after a scan showing coverage %, per-protocol counts, findings by severity, and schema gap hints.
+A human-readable summary is always printed to stderr after a scan showing coverage %, per-protocol counts, skipped-rule state, findings, artifact paths, and schema gap hints.
 
 When `--seed-store` is set, successful requests are persisted keyed by (operation, auth context). The store is additive — re-running a scan updates only records that succeed.
 

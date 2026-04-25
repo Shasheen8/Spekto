@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Shasheen8/Spekto/internal/inventory"
@@ -14,6 +16,17 @@ import (
 	"google.golang.org/grpc/reflection"
 	grpc_testing "google.golang.org/grpc/reflection/grpc_testing"
 )
+
+func TestRunVersionPrintsDevVersion(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}} {
+		output := captureStdout(t, func() error {
+			return run(args)
+		})
+		if output != "dev\n" {
+			t.Fatalf("run(%v) printed %q, want dev newline", args, output)
+		}
+	}
+}
 
 func TestRunDiscoverSpecWritesMergedInventory(t *testing.T) {
 	dir := t.TempDir()
@@ -80,6 +93,73 @@ type Model {
 	}
 	if payload.Summary.ByProtocol["graphql"] != 1 {
 		t.Fatalf("expected one graphql operation, got %d", payload.Summary.ByProtocol["graphql"])
+	}
+}
+
+func TestRunDiscoverSpecPrintsFullInventorySummary(t *testing.T) {
+	dir := t.TempDir()
+
+	openapiPath := filepath.Join(dir, "openapi.yaml")
+	openapiDoc := `
+openapi: 3.1.0
+info:
+  title: Test API
+  version: 1.0.0
+paths:
+  /v1/models:
+    get:
+      responses:
+        "200":
+          description: ok
+        "404":
+          description: not found
+  /v1/chat/completions:
+    post:
+      responses:
+        "201":
+          description: created
+        "400":
+          description: bad request
+  /v1/files/{file_id}:
+    delete:
+      responses:
+        "204":
+          description: deleted
+`
+	if err := os.WriteFile(openapiPath, []byte(openapiDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(openapi) returned error: %v", err)
+	}
+
+	outPath := filepath.Join(dir, "inventory.json")
+	output := captureStderr(t, func() error {
+		return run([]string{
+			"discover", "spec",
+			"--openapi", openapiPath,
+			"--out", outPath,
+		})
+	})
+
+	for _, want := range []string{
+		"Spekto discovery complete",
+		"Inventory  3 operations",
+		"rest:",
+		"Methods",
+		"GET",
+		"POST",
+		"DELETE",
+		"Operations",
+		"DELETE:/v1/files/{file_id}",
+		"status=204",
+		"GET:/v1/models",
+		"status=200,404",
+		"POST:/v1/chat/completions",
+		"status=201,400",
+		"Artifact",
+		outPath,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected discovery output to contain %q, got:\n%s", want, output)
+		}
 	}
 }
 
@@ -465,6 +545,156 @@ func TestRunScanWritesBundle(t *testing.T) {
 	}
 }
 
+func TestRunScanAcceptsOpenAPIAndWritesDefaultArtifacts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "spekto.yaml")
+	configDoc := "targets:\n  - name: rest\n    protocol: rest\n    base_url: " + server.URL + "\nscan:\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	openapiPath := filepath.Join(dir, "openapi.yaml")
+	openapiDoc := `
+openapi: 3.1.0
+info:
+  title: Test API
+  version: 1.0.0
+paths:
+  /:
+    get:
+      responses:
+        "200":
+          description: ok
+`
+	if err := os.WriteFile(openapiPath, []byte(openapiDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(openapi) returned error: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "spekto-artifacts")
+	output := captureStderr(t, func() error {
+		return run([]string{
+			"scan",
+			"--config", cfgPath,
+			"--openapi", openapiPath,
+			"--out-dir", outDir,
+			"--no-rules",
+		})
+	})
+	for _, want := range []string{
+		"Spekto discovery complete",
+		"Spekto scan complete",
+		filepath.Join(outDir, "inventory.json"),
+		filepath.Join(outDir, "evidence.json"),
+		filepath.Join(outDir, "coverage.json"),
+		filepath.Join(outDir, "findings.json"),
+		filepath.Join(outDir, "spekto.sarif"),
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+	for _, name := range []string{"inventory.json", "evidence.json", "coverage.json", "findings.json", "spekto.sarif"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			t.Fatalf("expected artifact %s: %v", name, err)
+		}
+	}
+}
+
+func TestRunScanDryRunHonorsOperationFilter(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "spekto.yaml")
+	configDoc := "targets:\n  - name: rest\n    protocol: rest\n    base_url: https://api.example.com\nscan:\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	wanted := inventory.NewRESTOperation(http.MethodGet, "/v1/wanted")
+	wanted.Confidence = 0.9
+	wanted.Status = inventory.StatusSeedable
+	wanted.REST = &inventory.RESTDetails{Method: http.MethodGet, NormalizedPath: "/v1/wanted"}
+	other := inventory.NewRESTOperation(http.MethodGet, "/v1/other")
+	other.Confidence = 0.9
+	other.Status = inventory.StatusSeedable
+	other.REST = &inventory.RESTDetails{Method: http.MethodGet, NormalizedPath: "/v1/other"}
+
+	invPath := filepath.Join(dir, "inventory.json")
+	data, err := inventory.Merge([]inventory.Operation{wanted, other}).JSON()
+	if err != nil {
+		t.Fatalf("inventory JSON returned error: %v", err)
+	}
+	if err := os.WriteFile(invPath, data, 0o600); err != nil {
+		t.Fatalf("os.WriteFile(inventory) returned error: %v", err)
+	}
+
+	output := captureStderr(t, func() error {
+		return run([]string{
+			"scan",
+			"--config", cfgPath,
+			"--inventory", invPath,
+			"--operation", "GET:/v1/wanted",
+			"--dry-run",
+		})
+	})
+	if !strings.Contains(output, "Inventory (1 of 2 operations selected)") {
+		t.Fatalf("expected filtered inventory count, got:\n%s", output)
+	}
+	if !strings.Contains(output, "GET:/v1/wanted") {
+		t.Fatalf("expected dry-run output to include selected operation, got:\n%s", output)
+	}
+	if strings.Contains(output, "GET:/v1/other") {
+		t.Fatalf("dry-run output should not include unselected operation, got:\n%s", output)
+	}
+}
+
+func TestRunScanNoRulesPrintsSummary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "spekto.yaml")
+	configDoc := "targets:\n  - name: rest\n    protocol: rest\n    base_url: " + server.URL + "\nscan:\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	operation := inventory.NewRESTOperation(http.MethodGet, "/")
+	operation.DisplayName = "root"
+	operation.Confidence = 0.9
+	operation.Status = inventory.StatusSeedable
+	operation.REST = &inventory.RESTDetails{Method: http.MethodGet, NormalizedPath: "/"}
+	invPath := filepath.Join(dir, "inventory.json")
+	data, err := inventory.Merge([]inventory.Operation{operation}).JSON()
+	if err != nil {
+		t.Fatalf("inventory JSON returned error: %v", err)
+	}
+	if err := os.WriteFile(invPath, data, 0o600); err != nil {
+		t.Fatalf("os.WriteFile(inventory) returned error: %v", err)
+	}
+
+	outPath := filepath.Join(dir, "bundle.json")
+	output := captureStderr(t, func() error {
+		return run([]string{"scan", "--config", cfgPath, "--inventory", invPath, "--no-rules", "--out", outPath})
+	})
+	for _, want := range []string{
+		"Spekto scan complete",
+		"Coverage  1/1 operations seeded",
+		"Rules     skipped (--no-rules)",
+		"Artifacts",
+		outPath,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+}
+
 func TestRunScanCapturesSeeds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -561,6 +791,50 @@ func TestRunScanCapturesSeeds(t *testing.T) {
 	if len(failStore.Records) != 0 {
 		t.Fatalf("expected 0 seed records for failed scan, got %d", len(failStore.Records))
 	}
+}
+
+func captureStderr(t *testing.T, fn func() error) string {
+	t.Helper()
+
+	original := os.Stderr
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe returned error: %v", err)
+	}
+	os.Stderr = writer
+	err = fn()
+	_ = writer.Close()
+	os.Stderr = original
+	if err != nil {
+		t.Fatalf("function returned error: %v", err)
+	}
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatalf("io.ReadAll returned error: %v", readErr)
+	}
+	return string(output)
+}
+
+func captureStdout(t *testing.T, fn func() error) string {
+	t.Helper()
+
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe returned error: %v", err)
+	}
+	os.Stdout = writer
+	err = fn()
+	_ = writer.Close()
+	os.Stdout = original
+	if err != nil {
+		t.Fatalf("function returned error: %v", err)
+	}
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatalf("io.ReadAll returned error: %v", readErr)
+	}
+	return string(output)
 }
 
 func TestTriStateBoolSetParsesTrueAndFalse(t *testing.T) {

@@ -23,6 +23,7 @@
 | 9 | Validation and hardening | ✅ Complete |
 | 10 | Injection, TLS, and disclosure rules | ✅ Complete |
 | 11 | Post-review safety, correctness, and test hardening | ✅ Complete |
+| 12 | Versioned binary, release CI, and reusable scanner workflow | ⏳ Planned |
 
 ## Objective
 
@@ -1581,6 +1582,160 @@ Fix the end-to-end review findings before treating Spekto as production-safe. Th
 - [x] `internal/rules` and `internal/report` have direct tests for their highest-risk behavior
 - [x] local release/PR readiness checklist runs tests, vet, race checks, coverage reporting, and dependency vulnerability scanning where available
 - [x] all Phase 11 fixes are validated with local fixtures before recurring production scans are enabled
+
+## Phase 12: Versioned Binary, Release CI, and Reusable Scanner Workflow
+
+### Status
+
+- [x] Phase 12 complete
+
+### Goal
+
+Make Spekto installable and reusable from other repositories without copying Spekto source code. Repos that own API specs should be able to trigger Spekto through a pinned versioned binary and a reusable GitHub Actions workflow, pass their spec and target configuration, and receive redacted findings, SARIF, coverage, and evidence artifacts.
+
+### Versioning Policy
+
+- Start releases at `v1.1`.
+- Auto-tag every successful release-eligible update from `main` as the next minor-style version: `v1.1`, `v1.2`, `v1.3`, and so on.
+- A branch build may produce an ephemeral pre-release or build artifact, but must not advance the stable release line unless merged to `main`.
+- Major versions such as `v2.0` or `v3.0` are reserved for breaking changes or intentionally grouped feature sets.
+- Release automation must not create a tag until CI passes.
+
+### Tasks
+
+#### 12.0 — CLI scan output polish
+
+- [x] Make discovery output useful by default
+  - print a Spekto-owned discovery summary after writing inventory JSON
+  - show HTTP method counts for REST inventories
+  - list every discovered operation by default; do not rank or truncate as "top" endpoints
+  - include documented response status codes on each REST operation
+  - show the inventory artifact location
+- [x] Make `scan --dry-run` honor the same target, operation, and tag filters shown in the scan command
+  - `--operation` and `--tag` must reduce the displayed operation list instead of printing the full inventory
+  - the inventory count must show selected operations versus total operations
+- [x] Print a Spekto-owned scan summary for `--no-rules`
+  - include seeded coverage
+  - make skipped rules explicit
+  - show artifact paths when files are written
+- [x] Keep normal scan output summary-first
+  - write machine-readable findings JSON only when `--findings-out` or `output.findings_path` is configured
+  - keep evidence output behavior unchanged
+
+#### 12.1 — CLI version support
+
+- [x] Add a build-time version variable for `spekto`
+  - default to `dev` for local builds
+  - set via `-ldflags "-X main.version=${version}"` in release builds
+- [x] Add a `spekto version` command or `--version` flag
+  - print only the version by default
+  - keep output script-friendly for CI and reusable workflows
+
+#### 12.2 — Simplified scan entrypoint for CI
+
+- [x] Let `spekto scan` accept spec inputs directly
+  - support `--openapi`, `--graphql-schema`, `--proto`, `--proto-import-path`, `--descriptor-set`, and `--grpc-reflection` on `scan`
+  - keep `--inventory` for advanced/reproducible workflows, but do not require it for the common CI path
+  - require at least one inventory source: either `--inventory` or a spec input
+  - when spec inputs are used, run discovery in-process before scanning
+- [x] Add default output directory behavior for scan artifacts
+  - support `--out-dir`, defaulting to `spekto-artifacts`
+  - when explicit output paths are not provided, write:
+    - `spekto-artifacts/inventory.json`
+    - `spekto-artifacts/evidence.json`
+    - `spekto-artifacts/coverage.json`
+    - `spekto-artifacts/findings.json`
+    - `spekto-artifacts/spekto.sarif`
+  - create the output directory with safe permissions
+  - keep explicit `--out`, `--coverage-out`, `--findings-out`, and `--sarif-out` overrides
+- [x] Make the CI command short and stable
+  - target reusable workflow command shape:
+    - `spekto scan --config spekto.yaml --openapi openapi.yaml`
+  - optional filters remain short:
+    - `--operation`, `--tag`, `--target`, `--no-rules`, `--stateful`
+  - avoid requiring downstream repos to compose long artifact and inventory paths manually
+
+#### 12.3 — Core CI
+
+- [x] Add `.github/workflows/ci.yml`
+  - run on pull requests and pushes to `main`
+  - use `actions/setup-go` with `go-version-file: go.mod`
+  - check `gofmt`
+  - run `go test ./...`
+  - run `go test -race ./...`
+  - run `go test ./... -coverprofile=coverage.out`
+  - run `go vet ./...`
+  - run `govulncheck ./...`
+  - build `spekto` with `go build -trimpath -o spekto ./cmd/spekto`
+  - upload coverage as a short-retention artifact
+
+#### 12.4 — Auto-tagging
+
+- [x] Add `.github/workflows/tag-release.yml`
+  - trigger only after successful `CI` on `main`
+  - fetch full history and tags
+  - if `HEAD` already has a semver tag, do nothing
+  - if no tags exist, create `v1.1`
+  - otherwise increment the minor version: `v1.1` -> `v1.2` -> `v1.3`
+  - do not bump major automatically
+  - create annotated tags with the GitHub Actions bot identity
+
+#### 12.5 — Release CI
+
+- [x] Add `.github/workflows/release.yml`
+  - trigger on `v*.*` tags and manual dispatch
+  - build release archives for:
+    - `linux/amd64`
+    - `linux/arm64`
+    - `darwin/amd64`
+    - `darwin/arm64`
+  - package `spekto`, `README.md`, and `LICENSE`
+  - generate `checksums.txt`
+  - publish or update the GitHub Release
+  - include generated release notes
+
+#### 12.6 — Reusable workflow for downstream repos
+
+- [x] Add `.github/workflows/spekto-reusable.yml`
+  - expose `workflow_call`
+  - accept inputs for `openapi`, `graphql_schema`, `target_name`, `base_url`, `endpoint`, `protocol`, `operation`, `tag`, `request_budget`, `timeout`, `no_rules`, `stateful`, and artifact retention
+  - accept secrets for bearer token and optional API key/header auth
+  - download a pinned Spekto release binary
+  - verify the binary checksum before execution
+  - generate a temporary `spekto.yaml` without printing secrets
+  - run one short scan command with read-only defaults:
+    - `spekto scan --config spekto.yaml --openapi <input> --out-dir spekto-artifacts`
+  - upload redacted `findings.json`, `coverage.json`, `spekto.sarif`, `evidence.json`, and `inventory.json` from `spekto-artifacts`
+  - optionally upload SARIF to GitHub code scanning when enabled
+
+#### 12.7 — Documentation and examples
+
+- [x] Update `README.md` with installation options
+  - GitHub release binary
+  - `go install`
+  - reusable GitHub Actions workflow
+- [x] Add a copy-paste workflow example for downstream repos
+  - show OpenAPI spec path
+  - show target URL
+  - show secret mapping
+  - show safe defaults
+  - use the short command: `spekto scan --config spekto.yaml --openapi openapi.yaml`
+- [x] Document release/versioning policy
+  - `v1.1` starting release
+  - automatic `v1.x` increments for normal releases
+  - manual major version bumps for breaking changes or large feature sets
+
+### Exit Criteria
+
+- [x] a clean checkout can build `spekto` through CI
+- [x] every release tag publishes checksummed binaries
+- [x] downstream repos can invoke Spekto without vendoring Spekto source
+- [x] downstream repos can run the common scan path with `spekto scan --config spekto.yaml --openapi openapi.yaml`
+- [x] downstream repos can pass specs, target URLs, and secrets safely
+- [x] release tags start at `v1.1` and increment as `v1.2`, `v1.3`, etc. on successful main releases
+- [x] major versions are never auto-incremented by routine commits
+- [x] release artifacts are reproducible enough for CI pinning and checksum verification
+- [x] PR and scheduled scans remain read-only by default
 
 ## GitHub Actions Rollout Plan
 

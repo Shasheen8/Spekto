@@ -29,10 +29,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
           cache: true
@@ -55,9 +55,9 @@ jobs:
         # Dispatch inputs are read through env vars to prevent shell injection.
         env:
           PROD_BEARER_TOKEN: ${{ secrets.PROD_BEARER_TOKEN }}
-          SCAN_TARGET: ${{ github.event.inputs.target }}
-          SCAN_OPERATION: ${{ github.event.inputs.operation }}
-          SCAN_NO_RULES: ${{ github.event.inputs.no_rules }}
+          SCAN_TARGET: ${{ inputs.target }}
+          SCAN_OPERATION: ${{ inputs.operation }}
+          SCAN_NO_RULES: ${{ inputs.no_rules }}
         run: |
           set -euo pipefail
           ARGS=(scan --config spekto.yaml --inventory inventory.json)
@@ -68,7 +68,7 @@ jobs:
           ./spekto "${ARGS[@]}"
 
       - name: Upload scan artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: spekto-${{ github.run_id }}

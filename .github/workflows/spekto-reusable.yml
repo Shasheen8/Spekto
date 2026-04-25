@@ -1,0 +1,192 @@
+name: Reusable Spekto Scan
+
+on:
+  workflow_call:
+    inputs:
+      spekto_version:
+        description: 'Spekto release version to download, for example v1.1'
+        required: true
+        type: string
+      openapi:
+        description: 'OpenAPI or Swagger spec path in the caller repository'
+        required: false
+        default: ''
+        type: string
+      graphql_schema:
+        description: 'GraphQL SDL or introspection JSON path in the caller repository'
+        required: false
+        default: ''
+        type: string
+      target_name:
+        description: 'Spekto target name'
+        required: false
+        default: rest-prod
+        type: string
+      protocol:
+        description: 'Target protocol: rest, graphql, or grpc'
+        required: false
+        default: rest
+        type: string
+      base_url:
+        description: 'REST base URL'
+        required: false
+        default: ''
+        type: string
+      endpoint:
+        description: 'GraphQL or gRPC endpoint'
+        required: false
+        default: ''
+        type: string
+      operation:
+        description: 'Operation ID or locator substring to include'
+        required: false
+        default: ''
+        type: string
+      tag:
+        description: 'Tag to include'
+        required: false
+        default: ''
+        type: string
+      request_budget:
+        description: 'Maximum request budget'
+        required: false
+        default: 200
+        type: number
+      timeout:
+        description: 'Per-request timeout'
+        required: false
+        default: 10s
+        type: string
+      no_rules:
+        description: 'Skip rule-based scanning'
+        required: false
+        default: false
+        type: boolean
+      stateful:
+        description: 'Enable stateful authorization checks'
+        required: false
+        default: false
+        type: boolean
+      upload_sarif:
+        description: 'Upload SARIF to GitHub code scanning'
+        required: false
+        default: false
+        type: boolean
+      artifact_retention_days:
+        description: 'Artifact retention in days'
+        required: false
+        default: 14
+        type: number
+    secrets:
+      bearer_token:
+        description: 'Bearer token for authenticated API scans'
+        required: false
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download Spekto release
+        env:
+          SPEKTO_REPO: Shasheen8/Spekto
+          SPEKTO_VERSION: ${{ inputs.spekto_version }}
+        run: |
+          set -euo pipefail
+          archive="spekto_${SPEKTO_VERSION}_linux_amd64.tar.gz"
+          base_url="https://github.com/${SPEKTO_REPO}/releases/download/${SPEKTO_VERSION}"
+          curl -fsSL "${base_url}/${archive}" -o "${archive}"
+          curl -fsSL "${base_url}/checksums.txt" -o checksums.txt
+          grep " ${archive}$" checksums.txt | sha256sum -c -
+          tar -xzf "${archive}"
+          install -m 0755 "spekto_${SPEKTO_VERSION}_linux_amd64/spekto" ./spekto
+
+      - name: Write Spekto config
+        env:
+          TARGET_NAME: ${{ inputs.target_name }}
+          TARGET_PROTOCOL: ${{ inputs.protocol }}
+          TARGET_BASE_URL: ${{ inputs.base_url }}
+          TARGET_ENDPOINT: ${{ inputs.endpoint }}
+          REQUEST_BUDGET: ${{ inputs.request_budget }}
+          TIMEOUT: ${{ inputs.timeout }}
+        run: |
+          set -euo pipefail
+          {
+            echo "targets:"
+            printf '  - name: "%s"\n' "${TARGET_NAME}"
+            printf '    protocol: "%s"\n' "${TARGET_PROTOCOL}"
+            if [ -n "${TARGET_BASE_URL}" ]; then
+              printf '    base_url: "%s"\n' "${TARGET_BASE_URL}"
+            fi
+            if [ -n "${TARGET_ENDPOINT}" ]; then
+              printf '    endpoint: "%s"\n' "${TARGET_ENDPOINT}"
+            fi
+            echo "    auth_contexts:"
+            echo "      - ci-token"
+            echo ""
+            echo "auth_contexts:"
+            echo "  - name: ci-token"
+            echo "    bearer_token_env: SPEKTO_BEARER_TOKEN"
+            echo ""
+            echo "scan:"
+            echo "  safety_level: read_only"
+            echo "  body_capture: redacted"
+            echo "  follow_redirects: false"
+            printf '  request_budget: %s\n' "${REQUEST_BUDGET}"
+            printf '  timeout: "%s"\n' "${TIMEOUT}"
+          } > spekto.yaml
+
+      - name: Run Spekto scan
+        env:
+          SPEKTO_BEARER_TOKEN: ${{ secrets.bearer_token }}
+          OPENAPI_PATH: ${{ inputs.openapi }}
+          GRAPHQL_SCHEMA_PATH: ${{ inputs.graphql_schema }}
+          SCAN_OPERATION: ${{ inputs.operation }}
+          SCAN_TAG: ${{ inputs.tag }}
+          SCAN_NO_RULES: ${{ inputs.no_rules }}
+          SCAN_STATEFUL: ${{ inputs.stateful }}
+        run: |
+          set -euo pipefail
+          args=(scan --config spekto.yaml --out-dir spekto-artifacts)
+          if [ -n "${OPENAPI_PATH}" ]; then
+            args+=(--openapi "${OPENAPI_PATH}")
+          fi
+          if [ -n "${GRAPHQL_SCHEMA_PATH}" ]; then
+            args+=(--graphql-schema "${GRAPHQL_SCHEMA_PATH}")
+          fi
+          if [ -n "${SCAN_OPERATION}" ]; then
+            args+=(--operation "${SCAN_OPERATION}")
+          fi
+          if [ -n "${SCAN_TAG}" ]; then
+            args+=(--tag "${SCAN_TAG}")
+          fi
+          if [ "${SCAN_NO_RULES}" = "true" ]; then
+            args+=(--no-rules)
+          fi
+          if [ "${SCAN_STATEFUL}" = "true" ]; then
+            args+=(--stateful)
+          fi
+          ./spekto "${args[@]}"
+
+      - name: Upload scan artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: spekto
+          path: spekto-artifacts
+          if-no-files-found: ignore
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        if: ${{ inputs.upload_sarif }}
+        with:
+          sarif_file: spekto-artifacts/spekto.sarif
