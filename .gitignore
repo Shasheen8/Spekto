@@ -22,6 +22,16 @@ coverage.txt
 *.coverprofile
 profile.cov
 
+# Spekto scan artifacts
+/PLAN.md
+spekto-artifacts/
+/inventory.json
+/evidence.json
+/coverage.json
+/findings.json
+/seeds.json
+/spekto.sarif
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 

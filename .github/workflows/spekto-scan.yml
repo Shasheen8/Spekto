@@ -44,12 +44,14 @@ jobs:
         # Generates inventory.json from a committed OpenAPI spec.
         # Skip this step if you commit inventory.json directly to the repo.
         if: ${{ vars.SPEKTO_OPENAPI_PATH != '' }}
-        run: ./spekto discover spec --openapi "$OPENAPI_PATH" --out inventory.json
+        run: |
+          mkdir -p spekto-artifacts
+          ./spekto discover spec --openapi "$OPENAPI_PATH" --out spekto-artifacts/inventory.json
         env:
           OPENAPI_PATH: ${{ vars.SPEKTO_OPENAPI_PATH }}
 
       - name: Dry run (validate config and inventory)
-        run: ./spekto scan --config spekto.yaml --inventory inventory.json --dry-run
+        run: ./spekto scan --config spekto.yaml --inventory spekto-artifacts/inventory.json --dry-run
 
       - name: Run scan
         # Dispatch inputs are read through env vars to prevent shell injection.
@@ -60,8 +62,8 @@ jobs:
           SCAN_NO_RULES: ${{ inputs.no_rules }}
         run: |
           set -euo pipefail
-          ARGS=(scan --config spekto.yaml --inventory inventory.json)
-          ARGS+=(--seed-store seeds.json --findings-out findings.json --out evidence.json)
+          ARGS=(scan --config spekto.yaml --inventory spekto-artifacts/inventory.json --out-dir spekto-artifacts)
+          ARGS+=(--seed-store spekto-artifacts/seeds.json --findings-out spekto-artifacts/findings.json --out spekto-artifacts/evidence.json)
           [ -n "$SCAN_TARGET" ]    && ARGS+=(--target    "$SCAN_TARGET")
           [ -n "$SCAN_OPERATION" ] && ARGS+=(--operation "$SCAN_OPERATION")
           [ "$SCAN_NO_RULES" = "true" ] && ARGS+=(--no-rules)
@@ -72,10 +74,6 @@ jobs:
         if: always()
         with:
           name: spekto-${{ github.run_id }}
-          path: |
-            findings.json
-            evidence.json
-            inventory.json
-            seeds.json
+          path: spekto-artifacts
           retention-days: 30
           if-no-files-found: ignore

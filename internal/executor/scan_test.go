@@ -155,6 +155,48 @@ func TestScanMatchesOperationsByTargetOrigin(t *testing.T) {
 	}
 }
 
+func TestScanUsesConfiguredRESTTargetWhenSpecOriginDiffers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	operation := inventory.NewRESTOperation(http.MethodGet, "/v1/models")
+	operation.Origins = []string{"http://localhost:5000"}
+	operation.Provenance = inventory.Provenance{Specified: true}
+	operation.Confidence = 0.9
+	operation.Status = inventory.StatusSeedable
+	operation.REST = &inventory.RESTDetails{
+		Method:         http.MethodGet,
+		NormalizedPath: "/v1/models",
+	}
+
+	cfg := config.Config{
+		Targets: []config.Target{{
+			Name:     "rest-prod",
+			Protocol: "rest",
+			BaseURL:  server.URL,
+		}},
+		Scan: config.ScanPolicy{
+			Concurrency:      1,
+			RequestBudget:    5,
+			Timeout:          2 * time.Second,
+			MaxResponseBytes: 1024,
+		},
+	}
+
+	bundle, err := Scan(context.Background(), cfg, inventory.Merge([]inventory.Operation{operation}), ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+	if bundle.Summary.Total != 1 || bundle.Summary.Succeeded != 1 {
+		t.Fatalf("configured target should override spec origin, summary: %#v", bundle.Summary)
+	}
+}
+
 func TestScanGraphQLTargetProducesGraphQLQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {

@@ -237,7 +237,10 @@ func selectTargetOperations(operations []inventory.Operation, target config.Targ
 		if string(operation.Protocol) != target.Protocol {
 			continue
 		}
-		if (len(operation.Targets) > 0 || len(operation.Origins) > 0) && !operationMatchesTarget(operation, target) {
+		if len(operation.Targets) > 0 && !targetValuesMatch(operation.Targets, target) {
+			continue
+		}
+		if !operation.Provenance.Specified && len(operation.Origins) > 0 && !targetValuesMatch(operation.Origins, target) {
 			continue
 		}
 		if len(includeOps) > 0 && !operationMatchesAny(operation, includeOps) {
@@ -252,6 +255,10 @@ func selectTargetOperations(operations []inventory.Operation, target config.Targ
 }
 
 func operationMatchesTarget(operation inventory.Operation, target config.Target) bool {
+	return targetValuesMatch(append(append([]string{}, operation.Targets...), operation.Origins...), target)
+}
+
+func targetValuesMatch(values []string, target config.Target) bool {
 	targetValues := []string{target.Name}
 	if raw := strings.TrimSpace(target.BaseURL); raw != "" {
 		targetValues = append(targetValues, raw)
@@ -262,7 +269,7 @@ func operationMatchesTarget(operation inventory.Operation, target config.Target)
 	if origin := targetOrigin(target); origin != "" {
 		targetValues = append(targetValues, origin)
 	}
-	for _, operationTarget := range append(append([]string{}, operation.Targets...), operation.Origins...) {
+	for _, operationTarget := range values {
 		for _, targetValue := range targetValues {
 			if strings.EqualFold(strings.TrimRight(operationTarget, "/"), strings.TrimRight(targetValue, "/")) {
 				return true
