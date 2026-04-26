@@ -1,17 +1,26 @@
-<h1 align="center">Spekto</h1>
+<table>
+<tr>
+<td width="300">
+<img src="docs/images/spekto_circular.png" alt="Spekto" width="260"/>
+</td>
+<td align="center">
 
-<p align="center">
-  <img src="docs/images/spekto_circular.png" alt="Spekto logo" width="220" />
-</p>
+# Spekto
 
-<p align="center">
-  <a href="https://github.com/Shasheen8/Spekto/actions/workflows/ci.yml"><img src="https://github.com/Shasheen8/Spekto/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://go.dev/dl/"><img src="https://img.shields.io/badge/Go-1.26.2-00ADD8?logo=go&logoColor=white" alt="Go 1.26.2"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License"></a>
-  <a href="https://github.com/Shasheen8/Spekto/releases"><img src="https://img.shields.io/badge/Release-v1.x-blue" alt="Release"></a>
-</p>
+### Spec-first API security scanner.
 
-Spec-first API security scanner for REST, GraphQL, and gRPC. Spekto turns specs and observed traffic into a canonical API inventory, seeds safe requests, runs security probes, and emits CLI summaries, evidence, findings, coverage, and SARIF.
+REST · GraphQL · gRPC. Inventory, safe seeding, security probes, evidence, coverage, SARIF.
+
+<a href="https://github.com/Shasheen8/Spekto/actions/workflows/ci.yml"><img src="https://github.com/Shasheen8/Spekto/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://go.dev/dl/"><img src="https://img.shields.io/badge/Go-1.26.2-00ADD8?logo=go&logoColor=white" alt="Go 1.26.2"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License"></a>
+<a href="https://github.com/Shasheen8/Spekto/releases"><img src="https://img.shields.io/badge/Release-v1.x-blue" alt="Release"></a>
+
+</td>
+</tr>
+</table>
+
+---
 
 ## Features
 
