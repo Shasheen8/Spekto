@@ -132,18 +132,11 @@ spekto --version
 ```
 
 ```bash
-spekto scan \
-  --config spekto.yaml \
-  --openapi openapi.yaml
+spekto scan --config spekto.yaml --openapi openapi.yaml
 
-spekto scan \
-  --config spekto.yaml \
-  --openapi openapi.yaml \
-  --dry-run
+spekto scan --config spekto.yaml --openapi openapi.yaml --dry-run
 
-spekto scan \
-  --config spekto.yaml \
-  --inventory inventory.json
+spekto scan --config spekto.yaml --inventory inventory.json
 ```
 
 Common scan flags:
@@ -160,6 +153,8 @@ Common scan flags:
 | `--allow-write`, `--allow-unsafe-rules`, `--allow-live-ssrf` | Explicit unsafe opt-ins |
 | `--stateful`, `--allow-write-stateful` | BOLA/BFLA checks |
 | `--out`, `--coverage-out`, `--findings-out`, `--sarif-out`, `--seed-store` | Explicit artifact paths |
+
+Discovery commands:
 
 ```bash
 spekto discover spec --openapi openapi.yaml --out inventory.json
