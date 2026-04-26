@@ -30,36 +30,7 @@ go install github.com/Shasheen8/Spekto/cmd/spekto@latest
 > [!NOTE]
 > The example config uses VAmPI as the public vulnerable testbed.
 
-```yaml
-targets:
-  - name: vampi-vulnerable
-    protocol: rest
-    base_url: http://127.0.0.1:5002
-    auth_contexts: [vampi-user]
-
-auth_contexts:
-  - name: vampi-user
-    login:
-      method: POST
-      url: http://127.0.0.1:5002/users/v1/login
-      content_type: application/json
-      body: '{"username":"name1","password":"pass1"}'
-      capture:
-        bearer_json_pointer: /auth_token
-
-scan:
-  safety_level: read_only
-  body_capture: redacted
-  follow_redirects: false
-  request_budget: 200
-  timeout: 10s
-  target_allowlist: [127.0.0.1, localhost]
-
-resource_hints:
-  path_params:
-    username: name1
-    book_title: book1
-```
+Use [`spekto.example.yaml`](spekto.example.yaml) as the starting config.
 
 Run:
 
@@ -69,8 +40,6 @@ spekto scan \
   --openapi ../VAmPI/openapi_specs/openapi3.yml \
   --out-dir spekto-artifacts
 ```
-
-A fuller template lives in [`spekto.example.yaml`](spekto.example.yaml).
 
 ## Output
 
@@ -142,12 +111,12 @@ jobs:
     with:
       spekto_version: v1.1
       openapi: openapi.yaml
-      target_name: rest-prod
+      target_name: rest-api
       protocol: rest
       base_url: https://api.example.com
       upload_sarif: true
     secrets:
-      bearer_token: ${{ secrets.PROD_BEARER_TOKEN }}
+      bearer_token: ${{ secrets.SPEKTO_BEARER_TOKEN }}
 ```
 
 The workflow downloads the pinned release, verifies checksums, writes a temporary `spekto.yaml`, runs:
@@ -166,9 +135,18 @@ spekto --version
 ```
 
 ```bash
-spekto scan --config spekto.yaml --openapi openapi.yaml
-spekto scan --config spekto.yaml --openapi openapi.yaml --dry-run
-spekto scan --config spekto.yaml --inventory inventory.json
+spekto scan \
+  --config spekto.yaml \
+  --openapi openapi.yaml
+
+spekto scan \
+  --config spekto.yaml \
+  --openapi openapi.yaml \
+  --dry-run
+
+spekto scan \
+  --config spekto.yaml \
+  --inventory inventory.json
 ```
 
 Common scan flags:
@@ -188,9 +166,13 @@ Common scan flags:
 
 ```bash
 spekto discover spec --openapi openapi.yaml --out inventory.json
+
 spekto discover traffic --har traffic.har --postman collection.json --access-log access.jsonl --out observed.json
+
 spekto discover manual --seed manual-endpoints.yaml --out manual.json
+
 spekto discover active --base-url http://127.0.0.1:5002 --out active.json
+
 spekto discover merge --inventory spec.json --inventory observed.json --inventory manual.json --out merged.json
 ```
 

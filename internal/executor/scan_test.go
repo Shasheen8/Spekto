@@ -134,7 +134,7 @@ func TestScanMatchesOperationsByTargetOrigin(t *testing.T) {
 
 	cfg := config.Config{
 		Targets: []config.Target{{
-			Name:     "rest-prod",
+			Name:     "rest-api",
 			Protocol: "rest",
 			BaseURL:  server.URL,
 		}},
@@ -176,7 +176,7 @@ func TestScanUsesConfiguredRESTTargetWhenSpecOriginDiffers(t *testing.T) {
 
 	cfg := config.Config{
 		Targets: []config.Target{{
-			Name:     "rest-prod",
+			Name:     "rest-api",
 			Protocol: "rest",
 			BaseURL:  server.URL,
 		}},

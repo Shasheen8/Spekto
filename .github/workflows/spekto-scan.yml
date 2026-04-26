@@ -56,7 +56,7 @@ jobs:
       - name: Run scan
         # Dispatch inputs are read through env vars to prevent shell injection.
         env:
-          PROD_BEARER_TOKEN: ${{ secrets.PROD_BEARER_TOKEN }}
+          SPEKTO_BEARER_TOKEN: ${{ secrets.SPEKTO_BEARER_TOKEN }}
           SCAN_TARGET: ${{ inputs.target }}
           SCAN_OPERATION: ${{ inputs.operation }}
           SCAN_NO_RULES: ${{ inputs.no_rules }}

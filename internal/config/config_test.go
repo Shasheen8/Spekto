@@ -7,16 +7,16 @@ import (
 )
 
 func TestLoadParsesConfigAndAppliesDefaults(t *testing.T) {
-	t.Setenv("TOGETHER_TOKEN", "token-1")
+	t.Setenv("SPEKTO_TEST_TOKEN", "token-1")
 	data := []byte(`
 targets:
-  - name: rest-prod
+  - name: rest-api
     protocol: REST
     base_url: https://api.example.com
     discovery_modes: [spec, traffic]
 auth_contexts:
-  - name: prod-bearer
-    bearer_token_env: TOGETHER_TOKEN
+  - name: api-bearer
+    bearer_token_env: SPEKTO_TEST_TOKEN
 scan:
   request_budget: 500
 output:
@@ -47,11 +47,11 @@ output:
 func TestLoadRejectsMissingSecretEnv(t *testing.T) {
 	data := []byte(`
 targets:
-  - name: rest-prod
+  - name: rest-api
     protocol: rest
     base_url: https://api.example.com
 auth_contexts:
-  - name: prod-bearer
+  - name: api-bearer
     bearer_token_env: MISSING_SPEKTO_TOKEN
 `)
 
@@ -66,9 +66,9 @@ func TestValidateRejectsPlaintextAuthenticatedRESTTargetByDefault(t *testing.T) 
 			Name:         "rest",
 			Protocol:     "rest",
 			BaseURL:      "http://api.example.com",
-			AuthContexts: []string{"prod-bearer"},
+			AuthContexts: []string{"api-bearer"},
 		}},
-		AuthContexts: []AuthContext{{Name: "prod-bearer", BearerToken: "token-1"}},
+		AuthContexts: []AuthContext{{Name: "api-bearer", BearerToken: "token-1"}},
 	}
 	cfg.applyDefaults()
 
@@ -83,9 +83,9 @@ func TestValidateAllowsPlaintextAuthenticatedLoopbackTarget(t *testing.T) {
 			Name:         "rest",
 			Protocol:     "rest",
 			BaseURL:      "http://127.0.0.1:8080",
-			AuthContexts: []string{"prod-bearer"},
+			AuthContexts: []string{"api-bearer"},
 		}},
-		AuthContexts: []AuthContext{{Name: "prod-bearer", BearerToken: "token-1"}},
+		AuthContexts: []AuthContext{{Name: "api-bearer", BearerToken: "token-1"}},
 	}
 	cfg.applyDefaults()
 

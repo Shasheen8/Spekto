@@ -47,21 +47,45 @@ jobs:
           else
             version="${REF_NAME}"
           fi
-          case "${version}" in
-            v[0-9]*.[0-9]*) ;;
-            *)
-              echo "version must look like v1.1"
-              exit 1
-              ;;
-          esac
           git fetch --tags --force
           if ! git rev-parse -q --verify "refs/tags/${version}" >/dev/null; then
             echo "tag ${version} does not exist"
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          if printf '%s\n' "${version}" | grep -Eq '^v[0-9]+\.[0-9]+\.0$'; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "Skipping Go module mirror tag ${version}; GitHub releases use vMAJOR.MINOR tags."
+            exit 0
+          fi
+          if ! printf '%s\n' "${version}" | grep -Eq '^v[0-9]+\.[0-9]+$'; then
+            echo "version must look like v1.1"
+            exit 1
+          fi
+          echo "skip=false" >> "${GITHUB_OUTPUT}"
+
+      - name: Seed Go proxy
+        if: steps.version.outputs.skip == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MODULE: github.com/Shasheen8/Spekto
+        run: |
+          set -euo pipefail
+          gobin="$(mktemp -d)"
+          for attempt in 1 2 3 4 5; do
+            if GOPROXY=https://proxy.golang.org,direct GONOSUMDB= GOPRIVATE= GONOPROXY= \
+                go list -m "${MODULE}@${VERSION}" &&
+               GOBIN="${gobin}" GOPROXY=https://proxy.golang.org,direct GONOSUMDB= GOPRIVATE= GONOPROXY= \
+                go install "${MODULE}/cmd/spekto@${VERSION}"; then
+              "${gobin}/spekto" version
+              exit 0
+            fi
+            sleep "$((attempt * 15))"
+          done
+          exit 1
 
       - name: Build release archives
+        if: steps.version.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -87,11 +111,13 @@ jobs:
           done
 
       - name: Generate checksums
+        if: steps.version.outputs.skip != 'true'
         run: |
           set -euo pipefail
           (cd dist && sha256sum ./*.tar.gz > checksums.txt)
 
       - name: Upload release artifacts
+        if: steps.version.outputs.skip != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-${{ steps.version.outputs.version }}
@@ -100,6 +126,7 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub release
+        if: steps.version.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}

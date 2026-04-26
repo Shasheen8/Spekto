@@ -20,7 +20,7 @@ on:
       target_name:
         description: 'Spekto target name'
         required: false
-        default: rest-prod
+        default: rest-api
         type: string
       protocol:
         description: 'Target protocol: rest, graphql, or grpc'
