@@ -254,10 +254,6 @@ func selectTargetOperations(operations []inventory.Operation, target config.Targ
 	return selected
 }
 
-func operationMatchesTarget(operation inventory.Operation, target config.Target) bool {
-	return targetValuesMatch(append(append([]string{}, operation.Targets...), operation.Origins...), target)
-}
-
 func targetValuesMatch(values []string, target config.Target) bool {
 	targetValues := []string{target.Name}
 	if raw := strings.TrimSpace(target.BaseURL); raw != "" {
@@ -364,15 +360,6 @@ func failedProtocolResult(target config.Target, operation inventory.Operation, a
 			},
 		},
 	}
-}
-
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func isReadOnlyHTTPMethod(method string) bool {

@@ -28,6 +28,62 @@ func TestRunVersionPrintsDevVersion(t *testing.T) {
 	}
 }
 
+func TestRunRootHelpPrintsUsage(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}} {
+		output := captureStdout(t, func() error {
+			return run(args)
+		})
+		for _, want := range []string{"Usage:", "Common workflows", "spekto scan", "spekto discover", "spekto version"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("expected root help to contain %q, got:\n%s", want, output)
+			}
+		}
+	}
+}
+
+func TestRunCommandHelpPrintsUsage(t *testing.T) {
+	tests := [][]string{
+		{"scan", "--help"},
+		{"scan", "-h"},
+		{"discover", "--help"},
+		{"discover", "help"},
+		{"discover", "spec", "--help"},
+		{"discover", "spec", "-h"},
+		{"discover", "spec", "help"},
+		{"discover", "traffic", "--help"},
+		{"discover", "manual", "--help"},
+		{"discover", "active", "--help"},
+		{"discover", "merge", "--help"},
+	}
+	for _, args := range tests {
+		output := captureStdout(t, func() error {
+			return run(args)
+		})
+		if !strings.Contains(output, "Usage:") {
+			t.Fatalf("expected %v help to contain Usage, got:\n%s", args, output)
+		}
+	}
+
+	scanHelp := captureStdout(t, func() error {
+		return run([]string{"scan", "--help"})
+	})
+	for _, want := range []string{"--policy", "--coverage-out", "--findings-out", "--sarif-out", "--seed-store"} {
+		if !strings.Contains(scanHelp, want) {
+			t.Fatalf("expected scan help to contain %q, got:\n%s", want, scanHelp)
+		}
+	}
+}
+
+func TestRunUnknownCommandSuggestsHelp(t *testing.T) {
+	err := run([]string{"bogus"})
+	if err == nil {
+		t.Fatalf("expected unknown command error")
+	}
+	if !strings.Contains(err.Error(), "spekto --help") {
+		t.Fatalf("expected help suggestion, got %v", err)
+	}
+}
+
 func TestRunDiscoverSpecWritesMergedInventory(t *testing.T) {
 	dir := t.TempDir()
 
@@ -605,6 +661,217 @@ paths:
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("expected artifact %s: %v", name, err)
 		}
+	}
+}
+
+func TestRunScanEmitsSchemaFindingsFromOpenAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":42,"role":"user","tags":[]}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "spekto.yaml")
+	configDoc := "targets:\n  - name: rest\n    protocol: rest\n    base_url: " + server.URL + "\nscan:\n  enabled_rules:\n    - SCHEMA002\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	openapiPath := filepath.Join(dir, "openapi.yaml")
+	openapiDoc := `
+openapi: 3.1.0
+info:
+  title: Schema Finding Test
+  version: 1.0.0
+paths:
+  /v1/users:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, role]
+                properties:
+                  id:
+                    type: string
+                  role:
+                    type: string
+                    enum: [user, admin]
+                  tags:
+                    type: array
+                    items:
+                      type: string
+`
+	if err := os.WriteFile(openapiPath, []byte(openapiDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(openapi) returned error: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "spekto-artifacts")
+	output := captureStderr(t, func() error {
+		return run([]string{
+			"scan",
+			"--config", cfgPath,
+			"--openapi", openapiPath,
+			"--out-dir", outDir,
+		})
+	})
+	if !strings.Contains(output, "SCHEMA002") {
+		t.Fatalf("expected CLI output to include SCHEMA002, got:\n%s", output)
+	}
+
+	findingsData, err := os.ReadFile(filepath.Join(outDir, "findings.json"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(findings) returned error: %v", err)
+	}
+	if !strings.Contains(string(findingsData), `"rule_id": "SCHEMA002"`) {
+		t.Fatalf("expected findings JSON to include SCHEMA002, got:\n%s", findingsData)
+	}
+
+	sarifData, err := os.ReadFile(filepath.Join(outDir, "spekto.sarif"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(sarif) returned error: %v", err)
+	}
+	if !strings.Contains(string(sarifData), `"ruleId": "SCHEMA002"`) {
+		t.Fatalf("expected SARIF to include SCHEMA002, got:\n%s", sarifData)
+	}
+
+	outDirFromInventory := filepath.Join(dir, "spekto-artifacts-from-inventory")
+	output = captureStderr(t, func() error {
+		return run([]string{
+			"scan",
+			"--config", cfgPath,
+			"--inventory", filepath.Join(outDir, "inventory.json"),
+			"--out-dir", outDirFromInventory,
+		})
+	})
+	if !strings.Contains(output, "SCHEMA002") {
+		t.Fatalf("expected persisted inventory scan output to include SCHEMA002, got:\n%s", output)
+	}
+	findingsData, err = os.ReadFile(filepath.Join(outDirFromInventory, "findings.json"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(persisted findings) returned error: %v", err)
+	}
+	if !strings.Contains(string(findingsData), `"rule_id": "SCHEMA002"`) {
+		t.Fatalf("expected persisted inventory findings JSON to include SCHEMA002, got:\n%s", findingsData)
+	}
+}
+
+func TestRunScanEmitsPolicyFindings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"admin_secret":"x"}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "spekto.yaml")
+	configDoc := "targets:\n  - name: rest\n    protocol: rest\n    base_url: " + server.URL + "\nauth_contexts:\n  - name: user\n    roles: [member]\nscan:\n  enabled_rules:\n    - AUTHZ003\n    - AUTHZ005\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	openapiPath := filepath.Join(dir, "openapi.yaml")
+	openapiDoc := `
+openapi: 3.1.0
+info:
+  title: Policy Finding Test
+  version: 1.0.0
+paths:
+  /admin:
+    get:
+      responses:
+        "200":
+          description: ok
+`
+	if err := os.WriteFile(openapiPath, []byte(openapiDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(openapi) returned error: %v", err)
+	}
+
+	policyPath := filepath.Join(dir, "spekto-policy.yaml")
+	policyDoc := `
+authorization:
+  - id: admin-deny
+    operation: GET:/admin
+    denied_auth_contexts: [user]
+    sensitive_fields: [admin_secret]
+`
+	if err := os.WriteFile(policyPath, []byte(policyDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(policy) returned error: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "spekto-artifacts")
+	output := captureStderr(t, func() error {
+		return run([]string{
+			"scan",
+			"--config", cfgPath,
+			"--openapi", openapiPath,
+			"--policy", policyPath,
+			"--auth-context", "user",
+			"--out-dir", outDir,
+		})
+	})
+	if !strings.Contains(output, "AUTHZ003") || !strings.Contains(output, "AUTHZ005") {
+		t.Fatalf("expected CLI output to include AUTHZ003 and AUTHZ005, got:\n%s", output)
+	}
+}
+
+func TestRunScanLoadsPolicyPathFromConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "spekto-policy.yaml")
+	policyDoc := `
+authorization:
+  - id: admin-deny
+    operation: GET:/admin
+    denied_auth_contexts: [user]
+`
+	if err := os.WriteFile(policyPath, []byte(policyDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(policy) returned error: %v", err)
+	}
+
+	cfgPath := filepath.Join(dir, "spekto.yaml")
+	configDoc := "policy_path: " + policyPath + "\ntargets:\n  - name: rest\n    protocol: rest\n    base_url: " + server.URL + "\nauth_contexts:\n  - name: user\nscan:\n  enabled_rules:\n    - AUTHZ005\n  concurrency: 1\n  request_budget: 5\n  timeout: 2s\n"
+	if err := os.WriteFile(cfgPath, []byte(configDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(config) returned error: %v", err)
+	}
+
+	openapiPath := filepath.Join(dir, "openapi.yaml")
+	openapiDoc := `
+openapi: 3.1.0
+info:
+  title: Config Policy Test
+  version: 1.0.0
+paths:
+  /admin:
+    get:
+      responses:
+        "200":
+          description: ok
+`
+	if err := os.WriteFile(openapiPath, []byte(openapiDoc), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(openapi) returned error: %v", err)
+	}
+
+	output := captureStderr(t, func() error {
+		return run([]string{
+			"scan",
+			"--config", cfgPath,
+			"--openapi", openapiPath,
+			"--auth-context", "user",
+			"--out-dir", filepath.Join(dir, "spekto-artifacts"),
+		})
+	})
+	if !strings.Contains(output, "AUTHZ005") {
+		t.Fatalf("expected CLI output to include AUTHZ005 from config policy_path, got:\n%s", output)
 	}
 }
 

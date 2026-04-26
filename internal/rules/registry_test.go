@@ -33,6 +33,17 @@ func TestSelectRulesCanOptIntoUnsafeAndLiveSSRF(t *testing.T) {
 	}
 }
 
+func TestSelectRulesIncludesXSSRulesInSafeDefaults(t *testing.T) {
+	selected := SelectRules(DefaultRules(), nil, nil, RuleSafety{})
+	ids := selectedRuleIDs(selected)
+
+	for _, id := range []string{"XSS001", "XSS002"} {
+		if !ids[id] {
+			t.Fatalf("rule %s should be selected by default", id)
+		}
+	}
+}
+
 func TestPathInjectedURLDoesNotDoubleEscapePayload(t *testing.T) {
 	got := pathInjectedURL("GET:/v1/models/{id}", "https://api.example.com/v1/models/abc", `' OR '1'='1`)
 	if strings.Contains(got, "%25") {

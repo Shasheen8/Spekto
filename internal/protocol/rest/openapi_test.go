@@ -195,6 +195,126 @@ components:
 	}
 }
 
+func TestParseDataExtractsSchemaSnapshots(t *testing.T) {
+	doc := `
+openapi: 3.1.0
+info:
+  title: Schema Snapshot Test
+  version: 1.0.0
+paths:
+  /v1/users:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, role]
+                properties:
+                  id:
+                    type: string
+                  role:
+                    type: string
+                    enum: [user, admin]
+                  tags:
+                    type: array
+                    items:
+                      type: string
+components: {}
+`
+
+	parsed, err := ParseData(context.Background(), []byte(doc), "spec.yaml")
+	if err != nil {
+		t.Fatalf("ParseData returned error: %v", err)
+	}
+	if len(parsed.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(parsed.Operations))
+	}
+
+	op := parsed.Operations[0]
+	if op.REST == nil || len(op.REST.ResponseMap) != 1 || len(op.REST.ResponseMap[0].Content) != 1 {
+		t.Fatalf("expected response content metadata, got %#v", op.REST)
+	}
+	schema := op.REST.ResponseMap[0].Content[0].Schema
+	if schema == nil {
+		t.Fatalf("expected response schema snapshot")
+	}
+	if schema.Type != "object" {
+		t.Fatalf("expected object schema, got %#v", schema)
+	}
+	if len(schema.Required) != 2 || schema.Required[0] != "id" || schema.Required[1] != "role" {
+		t.Fatalf("unexpected required fields: %#v", schema.Required)
+	}
+	role := schema.Properties["role"]
+	if role.Type != "string" || len(role.Enum) != 2 || role.Enum[1] != "admin" {
+		t.Fatalf("unexpected role schema: %#v", role)
+	}
+	tags := schema.Properties["tags"]
+	if tags.Type != "array" || tags.Items == nil || tags.Items.Type != "string" {
+		t.Fatalf("unexpected tags schema: %#v", tags)
+	}
+}
+
+func TestParseDataExtractsRequestSchemaSnapshots(t *testing.T) {
+	doc := `
+openapi: 3.1.0
+info:
+  title: Request Schema Snapshot Test
+  version: 1.0.0
+paths:
+  /v1/users:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [user, admin]
+      responses:
+        "201":
+          description: created
+components: {}
+`
+
+	parsed, err := ParseData(context.Background(), []byte(doc), "spec.yaml")
+	if err != nil {
+		t.Fatalf("ParseData returned error: %v", err)
+	}
+	if len(parsed.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(parsed.Operations))
+	}
+
+	body := parsed.Operations[0].REST.RequestBody
+	if body == nil || len(body.Content) != 1 {
+		t.Fatalf("expected request body metadata, got %#v", body)
+	}
+	schema := body.Content[0].Schema
+	if schema == nil {
+		t.Fatalf("expected request schema snapshot")
+	}
+	if schema.Type != "object" || len(schema.Required) != 1 || schema.Required[0] != "email" {
+		t.Fatalf("unexpected request schema: %#v", schema)
+	}
+	email := schema.Properties["email"]
+	if email.Type != "string" || email.Format != "email" {
+		t.Fatalf("unexpected email schema: %#v", email)
+	}
+	role := schema.Properties["role"]
+	if len(role.Enum) != 2 || role.Enum[0] != "user" || role.Enum[1] != "admin" {
+		t.Fatalf("unexpected role enum: %#v", role.Enum)
+	}
+}
+
 func TestParseSwaggerTwoConvertsToOperations(t *testing.T) {
 	doc := `
 swagger: "2.0"
@@ -267,7 +387,7 @@ components:
 	}
 }
 
-func TestParseFileResolvesLocalExternalRefs(t *testing.T) {
+func TestParseFileRejectsLocalExternalRefsByDefault(t *testing.T) {
 	dir := t.TempDir()
 	componentsPath := filepath.Join(dir, "schemas.yaml")
 	componentsDoc := `
@@ -299,15 +419,8 @@ paths:
 		t.Fatalf("os.WriteFile(spec) returned error: %v", err)
 	}
 
-	parsed, err := ParseFile(context.Background(), specPath)
-	if err != nil {
-		t.Fatalf("ParseFile returned error: %v", err)
-	}
-	if len(parsed.Operations) != 1 {
-		t.Fatalf("expected 1 operation, got %d", len(parsed.Operations))
-	}
-	if parsed.Operations[0].SchemaRefs.Responses["200"] == "" {
-		t.Fatalf("expected resolved response schema ref")
+	if _, err := ParseFile(context.Background(), specPath); err == nil {
+		t.Fatalf("expected external file ref to be rejected")
 	}
 }
 

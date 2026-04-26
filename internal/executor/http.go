@@ -430,22 +430,18 @@ func redactHeaderMap(headers http.Header) map[string]string {
 	sort.Strings(keys)
 	for _, key := range keys {
 		values := headers.Values(key)
-		if isSensitiveHeader(key) {
+		value := strings.Join(values, ",")
+		if isSensitiveHeader(key) || containsSensitiveValue(value) {
 			out[key] = "[redacted]"
 			continue
 		}
-		out[key] = strings.Join(values, ",")
+		out[key] = value
 	}
 	return out
 }
 
 func isSensitiveHeader(key string) bool {
-	switch strings.ToLower(key) {
-	case "authorization", "cookie", "set-cookie", "x-api-key", "proxy-authorization":
-		return true
-	default:
-		return false
-	}
+	return isSensitiveName(key)
 }
 
 func ValidateURLAllowlist(rawURL string, allowlist []string) error {

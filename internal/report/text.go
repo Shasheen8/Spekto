@@ -48,28 +48,37 @@ func PrintSummaryWithOptions(w io.Writer, bundle executor.Bundle, findings []rul
 	fmt.Fprintln(w, "Spekto scan complete")
 	fmt.Fprintln(w, divider)
 
-	// Coverage line.
-	s := bundle.Summary
+	coverage := bundle.Coverage
 	pct := 0.0
-	if s.Total > 0 {
-		pct = float64(s.Succeeded) / float64(s.Total) * 100
+	if coverage.TotalOperations > 0 {
+		pct = float64(coverage.Covered) / float64(coverage.TotalOperations) * 100
 	}
-	fmt.Fprintf(w, "Coverage  %d/%d operations seeded (%.0f%%)\n", s.Succeeded, s.Total, pct)
+	fmt.Fprintf(w, "Coverage  %d/%d operations seeded (%.0f%%)\n", coverage.Covered, coverage.TotalOperations, pct)
 
-	// Per-protocol breakdown — build succeeded counts in one pass.
-	succByProto := make(map[string]int, len(s.ByProtocol))
-	for _, r := range bundle.Results {
-		if r.Status == "succeeded" {
-			succByProto[string(r.Protocol)]++
+	byProto := map[string]map[string]string{}
+	for _, entry := range coverage.Entries {
+		key := entry.Target + "|" + entry.OperationID
+		if byProto[entry.Protocol] == nil {
+			byProto[entry.Protocol] = map[string]string{}
+		}
+		if entry.Status == "succeeded" || byProto[entry.Protocol][key] == "" {
+			byProto[entry.Protocol][key] = entry.Status
 		}
 	}
-	protos := make([]string, 0, len(s.ByProtocol))
-	for p := range s.ByProtocol {
+	protos := make([]string, 0, len(byProto))
+	for p := range byProto {
 		protos = append(protos, p)
 	}
 	sort.Strings(protos)
 	for _, proto := range protos {
-		fmt.Fprintf(w, "  %-9s %d/%d\n", proto+":", succByProto[proto], s.ByProtocol[proto])
+		total := len(byProto[proto])
+		covered := 0
+		for _, status := range byProto[proto] {
+			if status == "succeeded" {
+				covered++
+			}
+		}
+		fmt.Fprintf(w, "  %-9s %d/%d\n", proto+":", covered, total)
 	}
 
 	// Block reasons.

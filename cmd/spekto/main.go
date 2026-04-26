@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,18 +13,18 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
-
 	"github.com/Shasheen8/Spekto/internal/auth"
 	"github.com/Shasheen8/Spekto/internal/config"
 	activediscovery "github.com/Shasheen8/Spekto/internal/discovery/active"
 	"github.com/Shasheen8/Spekto/internal/executor"
 	"github.com/Shasheen8/Spekto/internal/inventory"
+	policyeval "github.com/Shasheen8/Spekto/internal/policy"
 	graphqldiscovery "github.com/Shasheen8/Spekto/internal/protocol/graphql"
 	grpcdiscovery "github.com/Shasheen8/Spekto/internal/protocol/grpc"
 	restdiscovery "github.com/Shasheen8/Spekto/internal/protocol/rest"
 	"github.com/Shasheen8/Spekto/internal/report"
 	"github.com/Shasheen8/Spekto/internal/rules"
+	schemavalidation "github.com/Shasheen8/Spekto/internal/schema"
 	"github.com/Shasheen8/Spekto/internal/seed"
 )
 
@@ -41,13 +43,21 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return usageError()
 	}
+	if isHelpArg(args[0]) || args[0] == "help" {
+		printRootHelp(os.Stdout)
+		return nil
+	}
 	switch args[0] {
 	case "version", "--version":
 		fmt.Fprintln(os.Stdout, version)
 		return nil
 	case "discover":
 		if len(args) < 2 {
-			return fmt.Errorf("unsupported discover subcommand")
+			return fmt.Errorf("unsupported discover subcommand; run spekto discover --help")
+		}
+		if isHelpArg(args[1]) || args[1] == "help" {
+			printDiscoverHelp(os.Stdout)
+			return nil
 		}
 		switch args[1] {
 		case "spec":
@@ -61,16 +71,20 @@ func run(args []string) error {
 		case "merge":
 			return runDiscoverMerge(args[2:])
 		default:
-			return fmt.Errorf("unsupported discover subcommand")
+			return fmt.Errorf("unsupported discover subcommand %q; run spekto discover --help", args[1])
 		}
 	case "scan":
 		return runScan(args[1:])
 	default:
-		return fmt.Errorf("unsupported command %q", args[0])
+		return fmt.Errorf("unsupported command %q; run spekto --help", args[0])
 	}
 }
 
 func runDiscoverSpec(args []string) error {
+	if wantsHelp(args) {
+		printDiscoverSpecHelp(os.Stdout)
+		return nil
+	}
 	fs := flag.NewFlagSet("discover spec", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -167,6 +181,10 @@ func buildSpecInventory(openapiPaths, graphqlPaths, protoFiles, protoImportPaths
 }
 
 func runDiscoverTraffic(args []string) error {
+	if wantsHelp(args) {
+		printDiscoverTrafficHelp(os.Stdout)
+		return nil
+	}
 	fs := flag.NewFlagSet("discover traffic", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -224,6 +242,10 @@ func runDiscoverTraffic(args []string) error {
 }
 
 func runDiscoverManual(args []string) error {
+	if wantsHelp(args) {
+		printDiscoverManualHelp(os.Stdout)
+		return nil
+	}
 	fs := flag.NewFlagSet("discover manual", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -259,6 +281,10 @@ func runDiscoverManual(args []string) error {
 }
 
 func runDiscoverActive(args []string) error {
+	if wantsHelp(args) {
+		printDiscoverActiveHelp(os.Stdout)
+		return nil
+	}
 	fs := flag.NewFlagSet("discover active", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -305,6 +331,10 @@ func runDiscoverActive(args []string) error {
 }
 
 func runDiscoverMerge(args []string) error {
+	if wantsHelp(args) {
+		printDiscoverMergeHelp(os.Stdout)
+		return nil
+	}
 	fs := flag.NewFlagSet("discover merge", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -379,7 +409,119 @@ func writeInventory(outPath string, merged inventory.Inventory) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: spekto version | spekto discover spec [...] | spekto discover traffic [--har path] [--postman path] [--access-log path] [--out file] | spekto discover manual [--seed file] [--out file] | spekto discover active [--base-url url] [--grpc-reflection host:port] [--out file] | spekto discover merge [--inventory file] [--out file] | spekto scan --config file (--inventory file | --openapi file) [--out-dir dir]")
+	return fmt.Errorf("usage: spekto --help")
+}
+
+func isHelpArg(arg string) bool {
+	return arg == "--help" || arg == "-h"
+}
+
+func wantsHelp(args []string) bool {
+	return len(args) > 0 && (isHelpArg(args[0]) || args[0] == "help")
+}
+
+func printRootHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto <command> [flags]
+
+Common workflows:
+  spekto scan --config spekto.yaml --openapi openapi.yaml --out-dir spekto-artifacts
+  spekto discover spec --openapi openapi.yaml --out inventory.json
+  spekto version
+
+Commands:
+  scan       Execute bounded API probes and write evidence/findings artifacts
+  discover   Build canonical API inventory from specs, traffic, manual seeds, or active discovery
+  version    Print Spekto version
+
+Run "spekto <command> --help" for command flags.`)
+}
+
+func printDiscoverHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto discover <subcommand> [flags]
+
+Subcommands:
+  spec      Read OpenAPI, GraphQL, proto, descriptors, or gRPC reflection
+  traffic   Read HAR, Postman collections, or access logs
+  manual    Read operator-authored seed files
+  active    Actively discover bounded HTTP and gRPC inventory
+  merge     Merge inventory JSON files
+
+Example:
+  spekto discover spec --openapi openapi.yaml --out inventory.json`)
+}
+
+func printScanHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto scan --config spekto.yaml (--inventory inventory.json | --openapi openapi.yaml) [flags]
+
+Inputs:
+  --config file              Scan configuration
+  --inventory file           Existing canonical inventory
+  --openapi file             OpenAPI or Swagger input
+  --graphql-schema file      GraphQL schema input
+  --proto file               Protobuf source input
+  --descriptor-set file      Protobuf descriptor set
+  --grpc-reflection target   gRPC reflection host:port
+  --policy file              Authorization and custom-check policy YAML
+
+Scope:
+  --target name              Include target
+  --exclude-target name      Exclude target
+  --auth-context name        Include auth context
+  --operation value          Include operation ID or locator substring
+  --tag value                Include operation tag
+
+Safety:
+  --dry-run                  Print scan plan without sending requests
+  --no-rules                 Skip rule-based checks after seeding
+  --stateful                 Enable BOLA/BFLA cross-context checks
+  --allow-write              Allow mutating seed requests
+  --allow-write-stateful     Include mutating stateful authorization checks
+  --allow-unsafe-rules       Allow destructive/resource-heavy probes
+  --allow-live-ssrf          Allow live metadata SSRF probes
+
+Runtime:
+  --concurrency n            Override scan concurrency
+  --request-budget n         Override request budget
+  --timeout duration         Override request timeout
+  --follow-redirects bool    Follow redirects
+
+Artifacts:
+  --out-dir dir              Directory for inventory/evidence/coverage/findings/SARIF
+  --out file                 Evidence bundle path
+  --coverage-out file        Coverage JSON path
+  --findings-out file        Findings JSON path
+  --sarif-out file           SARIF path
+  --seed-store file          Successful seed store path`)
+}
+
+func printDiscoverSpecHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto discover spec [--openapi file] [--graphql-schema file] [--proto file] [--descriptor-set file] [--grpc-reflection host:port] [--out inventory.json]
+
+Reads API specifications and writes canonical inventory JSON.`)
+}
+
+func printDiscoverTrafficHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto discover traffic [--har file] [--postman file] [--access-log file] [--out inventory.json]
+
+Reads captured traffic artifacts and writes canonical inventory JSON.`)
+}
+
+func printDiscoverManualHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto discover manual --seed file [--out inventory.json]
+
+Reads operator-authored seed files and writes canonical inventory JSON.`)
+}
+
+func printDiscoverActiveHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto discover active [--base-url url] [--grpc-reflection host:port] [--out inventory.json]
+
+Runs bounded active discovery against allowed targets.`)
+}
+
+func printDiscoverMergeHelp(w io.Writer) {
+	fmt.Fprintln(w, `Usage: spekto discover merge --inventory file [--inventory file...] [--out inventory.json]
+
+Merges multiple canonical inventory JSON files.`)
 }
 
 type multiValue []string
@@ -415,6 +557,10 @@ func markGRPCReflectionActive(ops []inventory.Operation, target string) []invent
 }
 
 func runScan(args []string) error {
+	if wantsHelp(args) {
+		printScanHelp(os.Stdout)
+		return nil
+	}
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -426,6 +572,7 @@ func runScan(args []string) error {
 	var sarifPath string
 	var coveragePath string
 	var seedStorePath string
+	var policyPath string
 	var openapiPaths multiValue
 	var graphqlPaths multiValue
 	var protoFiles multiValue
@@ -464,6 +611,7 @@ func runScan(args []string) error {
 	fs.StringVar(&sarifPath, "sarif-out", "", "Output path for SARIF findings (for GitHub Advanced Security)")
 	fs.StringVar(&coveragePath, "coverage-out", "", "Output path for coverage summary JSON")
 	fs.StringVar(&seedStorePath, "seed-store", "", "Path to seed store JSON file (captures successful requests)")
+	fs.StringVar(&policyPath, "policy", "", "Authorization and custom-check policy YAML path")
 	fs.BoolVar(&noRules, "no-rules", false, "Skip rule-based scanning after seeding")
 	fs.BoolVar(&dryRun, "dry-run", false, "Print what would be scanned without sending any requests")
 	fs.BoolVar(&stateful, "stateful", false, "Enable stateful authorization checks (BOLA001, BFLA001); requires at least two auth contexts")
@@ -518,9 +666,13 @@ func runScan(args []string) error {
 	if err != nil {
 		return err
 	}
+	loadedPolicy, hasPolicy, err := loadPolicy(policyPath, cfg.PolicyPath)
+	if err != nil {
+		return err
+	}
 
 	if dryRun {
-		return printDryRun(cfg, inv, includeTargets, excludeTargets, includeOperations, includeTags, stateful)
+		return printDryRun(cfg, inv, includeTargets, excludeTargets, includeOperations, includeTags, stateful, hasPolicy, loadedPolicy)
 	}
 
 	// Build and resolve the auth registry once so both the seed scan and rule
@@ -556,6 +708,15 @@ func runScan(args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	var schemaFindings []rules.Finding
+	var policyFindings []rules.Finding
+	if !noRules {
+		schemaFindings = filterFindingsByRuleID(schemavalidation.ValidateBundle(&bundle, inv), cfg.Scan.EnabledRules, cfg.Scan.DisabledRules)
+		if hasPolicy {
+			policyFindings = filterFindingsByRuleID(policyeval.Evaluate(&bundle, inv, cfg.AuthContexts, loadedPolicy), cfg.Scan.EnabledRules, cfg.Scan.DisabledRules)
+		}
 	}
 
 	// Capture successful requests as seeds (flag > config).
@@ -646,10 +807,13 @@ func runScan(args []string) error {
 		AllowUnsafeRules: cfg.Scan.AllowUnsafeRules,
 		AllowLiveSSRF:    cfg.Scan.AllowLiveSSRF,
 	})
-	findings, err := rules.Scan(context.Background(), bundle.Results, registry, selectedRules, policy, rules.ScanOptions{})
+	findings := append([]rules.Finding(nil), schemaFindings...)
+	findings = append(findings, policyFindings...)
+	ruleFindings, err := rules.Scan(context.Background(), bundle.Results, registry, selectedRules, policy, rules.ScanOptions{})
 	if err != nil {
 		return err
 	}
+	findings = append(findings, ruleFindings...)
 	grpcFindings, err := rules.GRPCScan(context.Background(), bundle.Results, cfg.Targets, registry, policy)
 	if err != nil {
 		return err
@@ -670,19 +834,6 @@ func runScan(args []string) error {
 			return err
 		}
 		findings = append(findings, statefulFindings...)
-	}
-
-	if len(findings) == 0 {
-		if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), findings, cfg.Scan.BodyCapture, &artifacts); err != nil {
-			return err
-		}
-		if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), findings, &artifacts); err != nil {
-			return err
-		}
-		report.PrintSummaryWithOptions(os.Stderr, bundle, findings, report.SummaryOptions{
-			Artifacts: artifacts,
-		})
-		return nil
 	}
 
 	if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), findings, cfg.Scan.BodyCapture, &artifacts); err != nil {
@@ -727,6 +878,52 @@ func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, 
 	if allowLiveSSRF {
 		cfg.Scan.AllowLiveSSRF = true
 	}
+}
+
+func filterFindingsByRuleID(findings []rules.Finding, enabledRules []string, disabledRules []string) []rules.Finding {
+	if len(findings) == 0 {
+		return nil
+	}
+	enabled := ruleIDSet(enabledRules)
+	disabled := ruleIDSet(disabledRules)
+	out := make([]rules.Finding, 0, len(findings))
+	for _, finding := range findings {
+		ruleID := strings.ToUpper(strings.TrimSpace(finding.RuleID))
+		if len(enabled) > 0 && !enabled[ruleID] {
+			continue
+		}
+		if disabled[ruleID] {
+			continue
+		}
+		out = append(out, finding)
+	}
+	return out
+}
+
+func loadPolicy(flagPath string, configPath string) (policyeval.Policy, bool, error) {
+	path := strings.TrimSpace(flagPath)
+	if path == "" {
+		path = strings.TrimSpace(configPath)
+	}
+	if path == "" {
+		return policyeval.Policy{}, false, nil
+	}
+	p, err := policyeval.LoadFile(path)
+	if err != nil {
+		return policyeval.Policy{}, false, fmt.Errorf("policy %s: %w", path, err)
+	}
+	return p, true, nil
+}
+
+func ruleIDSet(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range values {
+		normalized := strings.ToUpper(strings.TrimSpace(value))
+		if normalized != "" {
+			out[normalized] = true
+		}
+	}
+	return out
 }
 
 func hasScanSpecInput(openapiPaths, graphqlPaths, protoFiles, descriptorSets, grpcReflectionTargets []string) bool {
@@ -884,7 +1081,7 @@ func (b *triStateBool) Set(value string) error {
 }
 
 // printDryRun prints what would be scanned without executing any requests.
-func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, excludeTargets, includeOperations, includeTags []string, stateful bool) error {
+func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, excludeTargets, includeOperations, includeTags []string, stateful bool, hasPolicy bool, loadedPolicy policyeval.Policy) error {
 	fmt.Fprintln(os.Stderr, "Spekto dry run — no requests will be sent")
 
 	targets, err := cfg.SelectTargetsFiltered(includeTargets, excludeTargets)
@@ -945,6 +1142,11 @@ func printDryRun(cfg config.Config, inv inventory.Inventory, includeTargets, exc
 		statefulNote = "enabled"
 	}
 	fmt.Fprintf(os.Stderr, "\nRules: %d stateless  Stateful: %s\n", len(rules.DefaultRules()), statefulNote)
+	if hasPolicy {
+		fmt.Fprintf(os.Stderr, "Policy: %d authz expectation(s), %d custom check(s)\n", len(loadedPolicy.Authorization), len(loadedPolicy.CustomChecks))
+	} else {
+		fmt.Fprintln(os.Stderr, "Policy: not configured — AUTHZ003-AUTHZ005 and LOGIC001-LOGIC004 are not testable without policy")
+	}
 
 	if len(cfg.Scan.TargetAllowlist) > 0 {
 		fmt.Fprintf(os.Stderr, "Allowlist: %s\n", strings.Join(cfg.Scan.TargetAllowlist, ", "))

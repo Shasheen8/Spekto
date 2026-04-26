@@ -99,6 +99,26 @@ func TestMergeMarksSpecifiedButUnseenAndObservedUndocumented(t *testing.T) {
 	}
 }
 
+func TestMergeRecomputesStaleDerivedSignals(t *testing.T) {
+	specified := NewRESTOperation("GET", "/v1/users")
+	specified.Provenance = Provenance{Specified: true}
+	specified.Signals = []string{"specified_but_unseen"}
+
+	observed := NewRESTOperation("GET", "/v1/users")
+	observed.Provenance = Provenance{Observed: true}
+
+	merged := Merge([]Operation{specified}, []Operation{observed})
+	if len(merged.Operations) != 1 {
+		t.Fatalf("expected one merged operation, got %d", len(merged.Operations))
+	}
+	if len(merged.Operations[0].Signals) != 0 {
+		t.Fatalf("expected stale derived signals removed, got %#v", merged.Operations[0].Signals)
+	}
+	if merged.Summary.SpecifiedButUnseenCount != 0 || merged.Summary.ObservedUndocumentedCount != 0 {
+		t.Fatalf("expected no stale drift counts, got %#v", merged.Summary)
+	}
+}
+
 func TestMergeAuthRequirementCannotBeDowngradedByOrder(t *testing.T) {
 	unauthenticated := NewRESTOperation("GET", "/v1/private")
 	unauthenticated.AuthHints = AuthHints{RequiresAuth: AuthRequirementNo}
@@ -114,5 +134,52 @@ func TestMergeAuthRequirementCannotBeDowngradedByOrder(t *testing.T) {
 	merged = Merge([]Operation{authenticated}, []Operation{unauthenticated})
 	if got := merged.Operations[0].AuthHints.RequiresAuth; got != AuthRequirementYes {
 		t.Fatalf("expected auth requirement yes to win regardless of order, got %s", got)
+	}
+}
+
+func TestMergePreservesSchemaSnapshots(t *testing.T) {
+	specified := NewRESTOperation("GET", "/v1/users")
+	specified.Provenance = Provenance{Specified: true}
+	specified.REST = &RESTDetails{Method: "GET", NormalizedPath: "/v1/users"}
+	specified.REST.ResponseMap = []ResponseMeta{{
+		StatusCode: "200",
+		Content: []MediaTypeMeta{{
+			MediaType: "application/json",
+			Schema: &SchemaMeta{
+				Type:     "object",
+				Required: []string{"id"},
+				Properties: map[string]SchemaMeta{
+					"id": {Type: "string"},
+				},
+			},
+		}},
+	}}
+
+	observed := NewRESTOperation("GET", "/v1/users")
+	observed.Provenance = Provenance{Observed: true}
+	observed.REST = &RESTDetails{Method: "GET", NormalizedPath: "/v1/users"}
+	observed.REST.ResponseMap = []ResponseMeta{{
+		StatusCode: "200",
+		Content: []MediaTypeMeta{{
+			MediaType: "application/json",
+		}},
+	}}
+
+	merged := Merge([]Operation{specified}, []Operation{observed})
+	schema := merged.Operations[0].REST.ResponseMap[0].Content[0].Schema
+	if schema == nil {
+		t.Fatalf("expected merged response schema snapshot")
+	}
+	if schema.Type != "object" || schema.Properties["id"].Type != "string" {
+		t.Fatalf("unexpected merged schema: %#v", schema)
+	}
+
+	merged = Merge([]Operation{observed}, []Operation{specified})
+	schema = merged.Operations[0].REST.ResponseMap[0].Content[0].Schema
+	if schema == nil {
+		t.Fatalf("expected merged response schema snapshot when spec metadata arrives second")
+	}
+	if schema.Type != "object" || schema.Properties["id"].Type != "string" {
+		t.Fatalf("unexpected merged schema when spec metadata arrives second: %#v", schema)
 	}
 }

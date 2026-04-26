@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -23,6 +24,7 @@ type Config struct {
 	AuthContexts  []AuthContext    `yaml:"auth_contexts"`
 	Scan          ScanPolicy       `yaml:"scan"`
 	Output        OutputConfig     `yaml:"output"`
+	PolicyPath    string           `yaml:"policy_path,omitempty"`
 	ResourceHints ResourceHints    `yaml:"resource_hints,omitempty"`
 }
 
@@ -140,7 +142,9 @@ func LoadFile(path string) (Config, error) {
 
 func Load(data []byte) (Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, err
 	}
 	cfg.applyDefaults()

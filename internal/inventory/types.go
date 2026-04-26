@@ -136,6 +136,16 @@ type SchemaRefs struct {
 	Responses map[string]string `json:"responses,omitempty"`
 }
 
+type SchemaMeta struct {
+	Type       string                `json:"type,omitempty"`
+	Format     string                `json:"format,omitempty"`
+	Enum       []string              `json:"enum,omitempty"`
+	Required   []string              `json:"required,omitempty"`
+	Properties map[string]SchemaMeta `json:"properties,omitempty"`
+	Items      *SchemaMeta           `json:"items,omitempty"`
+	Nullable   bool                  `json:"nullable,omitempty"`
+}
+
 type Examples struct {
 	RequestBodies []ExampleValue   `json:"request_bodies,omitempty"`
 	Parameters    []ParameterValue `json:"parameters,omitempty"`
@@ -207,8 +217,9 @@ type RequestBodyMeta struct {
 }
 
 type MediaTypeMeta struct {
-	MediaType string `json:"media_type"`
-	SchemaRef string `json:"schema_ref,omitempty"`
+	MediaType string      `json:"media_type"`
+	SchemaRef string      `json:"schema_ref,omitempty"`
+	Schema    *SchemaMeta `json:"schema,omitempty"`
 }
 
 type ResponseMeta struct {

@@ -368,7 +368,7 @@ func redactMetadata(values map[string]string) map[string]string {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if isSensitiveHeader(key) {
+		if isSensitiveHeader(key) || containsSensitiveValue(values[key]) {
 			out[key] = "[redacted]"
 			continue
 		}

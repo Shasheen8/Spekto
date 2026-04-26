@@ -60,6 +60,22 @@ auth_contexts:
 	}
 }
 
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	data := []byte(`
+targets:
+  - name: rest-api
+    protocol: rest
+    base_url: https://api.example.com
+scan:
+  target_allowlists:
+    - api.example.com
+`)
+
+	if _, err := Load(data); err == nil {
+		t.Fatalf("expected unknown config field to fail")
+	}
+}
+
 func TestValidateRejectsPlaintextAuthenticatedRESTTargetByDefault(t *testing.T) {
 	cfg := Config{
 		Targets: []Target{{

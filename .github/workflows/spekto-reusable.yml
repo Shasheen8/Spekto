@@ -117,6 +117,7 @@ jobs:
           TARGET_ENDPOINT: ${{ inputs.endpoint }}
           REQUEST_BUDGET: ${{ inputs.request_budget }}
           TIMEOUT: ${{ inputs.timeout }}
+          SPEKTO_BEARER_TOKEN: ${{ secrets.bearer_token }}
         run: |
           set -euo pipefail
           {
@@ -129,13 +130,15 @@ jobs:
             if [ -n "${TARGET_ENDPOINT}" ]; then
               printf '    endpoint: "%s"\n' "${TARGET_ENDPOINT}"
             fi
-            echo "    auth_contexts:"
-            echo "      - ci-token"
-            echo ""
-            echo "auth_contexts:"
-            echo "  - name: ci-token"
-            echo "    bearer_token_env: SPEKTO_BEARER_TOKEN"
-            echo ""
+            if [ -n "${SPEKTO_BEARER_TOKEN}" ]; then
+              echo "    auth_contexts:"
+              echo "      - ci-token"
+              echo ""
+              echo "auth_contexts:"
+              echo "  - name: ci-token"
+              echo "    bearer_token_env: SPEKTO_BEARER_TOKEN"
+              echo ""
+            fi
             echo "scan:"
             echo "  safety_level: read_only"
             echo "  body_capture: redacted"

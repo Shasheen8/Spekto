@@ -176,7 +176,21 @@ func probeEvidence(result executor.HTTPResult) *executor.Evidence {
 	}
 }
 
-// newFinding constructs a Finding from the common fields every rule provides.
+// NewFinding constructs a Finding from the common fields every rule provides.
+func NewFinding(
+	ruleID string,
+	severity Severity,
+	confidence Confidence,
+	title, description string,
+	seed executor.Result,
+	evidence FindingEvidence,
+	owasp string,
+	cwe int,
+	remediation string,
+) Finding {
+	return newFinding(ruleID, severity, confidence, title, description, seed, evidence, owasp, cwe, remediation)
+}
+
 func newFinding(
 	ruleID string,
 	severity Severity,

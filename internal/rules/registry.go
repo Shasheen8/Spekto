@@ -29,6 +29,9 @@ func DefaultRules() []Rule {
 		&GraphQLIntrospectionEnabled{},
 		&GraphQLAuthBypass{},
 		&GraphQLBatchAbuse{},
+		// API response XSS / unsafe reflection
+		&ReflectedXSS{},
+		&StoredXSS{},
 		// Injection
 		&ServerErrorOnInput{},
 		&SQLInjection{},

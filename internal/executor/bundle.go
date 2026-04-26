@@ -2,6 +2,8 @@ package executor
 
 import (
 	"encoding/json"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -91,6 +93,18 @@ func (b *Bundle) Finalize() {
 	b.Coverage = buildCoverageReport(b.Results)
 }
 
+func (b *Bundle) AddSchemaGap(resultIndex int, gap string) {
+	if b == nil {
+		return
+	}
+	if resultIndex >= 0 && resultIndex < len(b.Results) {
+		b.Results[resultIndex].SchemaGaps = appendUniqueString(b.Results[resultIndex].SchemaGaps, gap)
+	}
+	if resultIndex >= 0 && resultIndex < len(b.Coverage.Entries) {
+		b.Coverage.Entries[resultIndex].SchemaGaps = appendUniqueString(b.Coverage.Entries[resultIndex].SchemaGaps, gap)
+	}
+}
+
 func (b Bundle) JSON() ([]byte, error) {
 	return json.MarshalIndent(b, "", "  ")
 }
@@ -112,25 +126,170 @@ func (r Result) Redacted() Result {
 
 func (e Evidence) Redacted() Evidence {
 	out := e
+	out.Request.URL = redactURLString(out.Request.URL)
+	out.Request.Headers = redactStringMap(out.Request.Headers)
+	out.Request.Metadata = redactStringMap(out.Request.Metadata)
+	out.Response.Headers = redactStringMap(out.Response.Headers)
 	out.Request.Body = redactedBodySnippet(out.Request.Body)
 	out.Response.Body = redactedBodySnippet(out.Response.Body)
 	return out
+}
+
+var secretValuePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\b(?:eyJ[A-Za-z0-9_-]+)\.(?:[A-Za-z0-9_-]+)\.(?:[A-Za-z0-9_-]+)\b`),
+	regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`),
+	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
 }
 
 func redactedBodySnippet(body []byte) []byte {
 	if len(body) == 0 {
 		return nil
 	}
-	text := strings.ToLower(string(body))
-	for _, marker := range []string{"token", "secret", "password", "credential", "api_key", "apikey", "access_key", "private_key"} {
-		if strings.Contains(text, marker) {
-			return []byte("[redacted]")
-		}
+	if redacted, ok := redactJSONBody(body); ok {
+		return trimBody(redacted)
 	}
+	if containsSensitiveValue(string(body)) {
+		return []byte("[redacted]")
+	}
+	return trimBody(body)
+}
+
+func trimBody(body []byte) []byte {
 	if len(body) > 512 {
 		return append(append([]byte(nil), body[:512]...), []byte("...[truncated]")...)
 	}
 	return append([]byte(nil), body...)
+}
+
+func redactJSONBody(body []byte) ([]byte, bool) {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil, false
+	}
+	redacted := redactJSONValue(value, "")
+	data, err := json.Marshal(redacted)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func redactJSONValue(value any, key string) any {
+	if isSensitiveName(key) {
+		return "[redacted]"
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for childKey, childValue := range v {
+			out[childKey] = redactJSONValue(childValue, childKey)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, childValue := range v {
+			out[i] = redactJSONValue(childValue, key)
+		}
+		return out
+	case string:
+		if containsSensitiveValue(v) {
+			return "[redacted]"
+		}
+	}
+	return value
+}
+
+func redactStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		if isSensitiveName(key) || containsSensitiveValue(value) {
+			out[key] = "[redacted]"
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func redactURLString(rawURL string) string {
+	if strings.TrimSpace(rawURL) == "" {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		if containsSensitiveValue(rawURL) {
+			return "[redacted]"
+		}
+		return rawURL
+	}
+	if parsed.User != nil {
+		parsed.User = url.User("[redacted]")
+	}
+	query := parsed.Query()
+	changed := false
+	for key, values := range query {
+		if isSensitiveName(key) {
+			query.Set(key, "[redacted]")
+			changed = true
+			continue
+		}
+		for i, value := range values {
+			if containsSensitiveValue(value) {
+				values[i] = "[redacted]"
+				changed = true
+			}
+		}
+		query[key] = values
+	}
+	if changed {
+		parsed.RawQuery = query.Encode()
+	}
+	return parsed.String()
+}
+
+func isSensitiveName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return false
+	}
+	switch lower {
+	case "authorization", "proxy-authorization", "cookie", "set-cookie":
+		return true
+	}
+	for _, marker := range []string{"token", "secret", "password", "passwd", "credential", "api-key", "api_key", "apikey", "access-key", "access_key", "private-key", "private_key", "session", "jwt"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSensitiveValue(value string) bool {
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, "-----begin ") && strings.Contains(lower, "private key-----") {
+		return true
+	}
+	for _, pattern := range secretValuePatterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func summarizeResults(results []Result) BundleSummary {
@@ -199,6 +358,7 @@ func buildCoverageReport(results []Result) CoverageReport {
 // Reasons (in match priority order):
 //
 //	auth_missing          — no matching auth context was available
+//	write_not_allowed     — mutating operation skipped by read-only safety defaults
 //	budget_exceeded       — request budget was exhausted before this operation ran
 //	streaming_unsupported — gRPC streaming method, not yet supported
 //	schema_gap            — request failed and the seed relied only on type fallbacks
@@ -207,6 +367,8 @@ func buildCoverageReport(results []Result) CoverageReport {
 func classifyBlockReason(r Result) string {
 	errLower := strings.ToLower(r.Error)
 	switch {
+	case strings.Contains(errLower, "mutating operation requires explicit write opt-in"):
+		return "write_not_allowed"
 	case strings.Contains(errLower, "auth") || strings.Contains(errLower, "no matching auth"):
 		return "auth_missing"
 	case strings.Contains(errLower, "request budget"):

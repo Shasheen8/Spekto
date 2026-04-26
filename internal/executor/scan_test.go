@@ -115,6 +115,9 @@ func TestScanSkipsMutatingRESTOperationsByDefault(t *testing.T) {
 	if bundle.Results[0].Error != "skipped: mutating operation requires explicit write opt-in" {
 		t.Fatalf("unexpected skip reason: %s", bundle.Results[0].Error)
 	}
+	if got := bundle.Coverage.ByReason["write_not_allowed"]; got != 1 {
+		t.Fatalf("expected write_not_allowed coverage reason, got %#v", bundle.Coverage.ByReason)
+	}
 }
 
 func TestScanMatchesOperationsByTargetOrigin(t *testing.T) {

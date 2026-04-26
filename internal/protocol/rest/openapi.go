@@ -200,7 +200,7 @@ func parseOpenAPI3(ctx context.Context, data []byte, source string) (*openapi3.T
 func parseOpenAPI3File(ctx context.Context, path string) (*openapi3.T, error) {
 	loader := openapi3.NewLoader()
 	loader.Context = ctx
-	loader.IsExternalRefsAllowed = true
+	loader.IsExternalRefsAllowed = false
 	if abs, err := filepath.Abs(path); err == nil {
 		return loader.LoadFromFile(abs)
 	}
@@ -415,13 +415,16 @@ func toRequestBodyMeta(body *openapi3.RequestBody) *inventory.RequestBodyMeta {
 	for _, mediaType := range mediaTypes {
 		content := body.Content.Get(mediaType)
 		schemaRef := ""
+		var schema *inventory.SchemaMeta
 		if content != nil && content.Schema != nil {
 			schemaRef = content.Schema.Ref
 			meta.SchemaRefs[mediaType] = schemaRef
+			schema = toSchemaMeta(content.Schema)
 		}
 		meta.Content = append(meta.Content, inventory.MediaTypeMeta{
 			MediaType: mediaType,
 			SchemaRef: schemaRef,
+			Schema:    schema,
 		})
 	}
 	return meta
@@ -440,13 +443,16 @@ func toResponseMeta(code string, response *openapi3.Response) inventory.Response
 	for _, mediaType := range mediaTypes {
 		content := response.Content.Get(mediaType)
 		schemaRef := ""
+		var schema *inventory.SchemaMeta
 		if content != nil && content.Schema != nil {
 			schemaRef = content.Schema.Ref
 			meta.SchemaRefs[mediaType] = schemaRef
+			schema = toSchemaMeta(content.Schema)
 		}
 		meta.Content = append(meta.Content, inventory.MediaTypeMeta{
 			MediaType: mediaType,
 			SchemaRef: schemaRef,
+			Schema:    schema,
 		})
 	}
 	return meta
@@ -571,7 +577,68 @@ func schemaType(schema *openapi3.Schema) string {
 	if schema == nil || schema.Type == nil || len(*schema.Type) == 0 {
 		return ""
 	}
+	for _, t := range *schema.Type {
+		if t != "null" {
+			return t
+		}
+	}
 	return (*schema.Type)[0]
+}
+
+func toSchemaMeta(ref *openapi3.SchemaRef) *inventory.SchemaMeta {
+	if ref == nil || ref.Value == nil {
+		return nil
+	}
+	return toSchemaMetaValue(ref.Value, map[*openapi3.Schema]bool{}, 0)
+}
+
+func toSchemaMetaValue(schema *openapi3.Schema, seen map[*openapi3.Schema]bool, depth int) *inventory.SchemaMeta {
+	if schema == nil || depth > 8 {
+		return nil
+	}
+	if seen[schema] {
+		return nil
+	}
+	seen[schema] = true
+	defer delete(seen, schema)
+
+	meta := &inventory.SchemaMeta{
+		Type:     schemaType(schema),
+		Format:   schema.Format,
+		Enum:     stringifySlice(schema.Enum),
+		Required: append([]string(nil), schema.Required...),
+		Nullable: schema.Nullable || schemaTypeIncludes(schema, "null"),
+	}
+	if schema.Items != nil {
+		meta.Items = toSchemaMetaValue(schema.Items.Value, seen, depth+1)
+	}
+	if len(schema.Properties) > 0 {
+		keys := make([]string, 0, len(schema.Properties))
+		for name := range schema.Properties {
+			keys = append(keys, name)
+		}
+		sort.Strings(keys)
+		meta.Properties = make(map[string]inventory.SchemaMeta, len(keys))
+		for _, name := range keys {
+			child := toSchemaMetaValue(schema.Properties[name].Value, seen, depth+1)
+			if child != nil {
+				meta.Properties[name] = *child
+			}
+		}
+	}
+	return meta
+}
+
+func schemaTypeIncludes(schema *openapi3.Schema, want string) bool {
+	if schema == nil || schema.Type == nil {
+		return false
+	}
+	for _, t := range *schema.Type {
+		if t == want {
+			return true
+		}
+	}
+	return false
 }
 
 func toJSONCompatible(value any) any {

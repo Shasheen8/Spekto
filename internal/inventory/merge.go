@@ -362,6 +362,9 @@ func mergeMediaTypes(a, b []MediaTypeMeta) []MediaTypeMeta {
 		if existing.SchemaRef == "" {
 			existing.SchemaRef = value.SchemaRef
 		}
+		if existing.Schema == nil {
+			existing.Schema = value.Schema
+		}
 		seen[key] = existing
 	}
 	out := make([]MediaTypeMeta, 0, len(seen))
@@ -404,7 +407,13 @@ func summarize(ops []Operation) Summary {
 }
 
 func applyDerivedSignals(op Operation) Operation {
-	signals := append([]string(nil), op.Signals...)
+	signals := make([]string, 0, len(op.Signals))
+	for _, signal := range op.Signals {
+		if signal == "specified_but_unseen" || signal == "observed_but_undocumented" {
+			continue
+		}
+		signals = append(signals, signal)
+	}
 	if op.Provenance.Specified && !op.Provenance.Observed {
 		signals = append(signals, "specified_but_unseen")
 	}

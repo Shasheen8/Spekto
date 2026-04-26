@@ -10,15 +10,16 @@ import (
 // It extends the bundle's CoverageReport with per-auth-context breakdowns and
 // a deduplicated schema gap list for operator diagnostics.
 type CoverageSummary struct {
-	TotalOperations int                       `json:"total_operations"`
-	Succeeded       int                       `json:"succeeded"`
-	Failed          int                       `json:"failed"`
-	Skipped         int                       `json:"skipped"`
-	CoveragePct     float64                   `json:"coverage_pct"`
-	ByProtocol      map[string]ProtoBreakdown `json:"by_protocol,omitempty"`
-	ByAuthContext   map[string]AuthBreakdown  `json:"by_auth_context,omitempty"`
-	ByReason        map[string]int            `json:"by_reason,omitempty"`
-	SchemaGaps      []SchemaGapEntry          `json:"schema_gaps,omitempty"`
+	TotalOperations   int                       `json:"total_operations"`
+	ExecutionAttempts int                       `json:"execution_attempts"`
+	Succeeded         int                       `json:"succeeded"`
+	Failed            int                       `json:"failed"`
+	Skipped           int                       `json:"skipped"`
+	CoveragePct       float64                   `json:"coverage_pct"`
+	ByProtocol        map[string]ProtoBreakdown `json:"by_protocol,omitempty"`
+	ByAuthContext     map[string]AuthBreakdown  `json:"by_auth_context,omitempty"`
+	ByReason          map[string]int            `json:"by_reason,omitempty"`
+	SchemaGaps        []SchemaGapEntry          `json:"schema_gaps,omitempty"`
 }
 
 // ProtoBreakdown aggregates coverage counts for a single protocol.
@@ -46,29 +47,16 @@ type SchemaGapEntry struct {
 
 // BuildCoverageSummary derives a CoverageSummary from a completed scan bundle.
 func BuildCoverageSummary(bundle executor.Bundle) CoverageSummary {
-	s := bundle.Summary
+	coverage := bundle.Coverage
 	pct := 0.0
-	if s.Total > 0 {
-		pct = float64(s.Succeeded) / float64(s.Total) * 100
+	if coverage.TotalOperations > 0 {
+		pct = float64(coverage.Covered) / float64(coverage.TotalOperations) * 100
 	}
 
-	byProto := map[string]ProtoBreakdown{}
+	byProto := operationCoverageByProtocol(coverage)
 	byAuth := map[string]AuthBreakdown{}
 
 	for _, r := range bundle.Results {
-		proto := string(r.Protocol)
-		pb := byProto[proto]
-		pb.Total++
-		switch r.Status {
-		case "succeeded":
-			pb.Succeeded++
-		case "skipped":
-			pb.Skipped++
-		default:
-			pb.Failed++
-		}
-		byProto[proto] = pb
-
 		if r.AuthContextName != "" {
 			ab := byAuth[r.AuthContextName]
 			switch r.Status {
@@ -100,16 +88,54 @@ func BuildCoverageSummary(bundle executor.Bundle) CoverageSummary {
 	}
 
 	return CoverageSummary{
-		TotalOperations: s.Total,
-		Succeeded:       s.Succeeded,
-		Failed:          s.Failed,
-		Skipped:         s.Skipped,
-		CoveragePct:     pct,
-		ByProtocol:      byProto,
-		ByAuthContext:   byAuth,
-		ByReason:        bundle.Coverage.ByReason,
-		SchemaGaps:      gaps,
+		TotalOperations:   coverage.TotalOperations,
+		ExecutionAttempts: coverage.ExecutionAttempts,
+		Succeeded:         coverage.Covered,
+		Failed:            coverage.Uncovered,
+		Skipped:           bundle.Summary.Skipped,
+		CoveragePct:       pct,
+		ByProtocol:        byProto,
+		ByAuthContext:     byAuth,
+		ByReason:          coverage.ByReason,
+		SchemaGaps:        gaps,
 	}
+}
+
+func operationCoverageByProtocol(coverage executor.CoverageReport) map[string]ProtoBreakdown {
+	type operationState struct {
+		protocol string
+		status   string
+	}
+	states := map[string]operationState{}
+	for _, entry := range coverage.Entries {
+		key := entry.Target + "|" + entry.OperationID
+		state := states[key]
+		if state.protocol == "" {
+			state.protocol = entry.Protocol
+			state.status = entry.Status
+		}
+		if entry.Status == "succeeded" {
+			state.status = "succeeded"
+		} else if state.status == "" {
+			state.status = entry.Status
+		}
+		states[key] = state
+	}
+	byProto := map[string]ProtoBreakdown{}
+	for _, state := range states {
+		pb := byProto[state.protocol]
+		pb.Total++
+		switch state.status {
+		case "succeeded":
+			pb.Succeeded++
+		case "skipped":
+			pb.Skipped++
+		default:
+			pb.Failed++
+		}
+		byProto[state.protocol] = pb
+	}
+	return byProto
 }
 
 // JSON serialises the summary as indented JSON.

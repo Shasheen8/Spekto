@@ -131,7 +131,7 @@ func TestPrintDiscoverySummaryUsesOperationsTable(t *testing.T) {
 	op := inventory.NewRESTOperation("GET", "/users/v1/{username}")
 	op.Confidence = 0.9
 	op.AuthHints.RequiresAuth = inventory.AuthRequirementUnknown
-	op.Signals = []string{"specified_but_unseen"}
+	op.Provenance.Specified = true
 	op.REST = &inventory.RESTDetails{
 		Method:         "GET",
 		NormalizedPath: "/users/v1/{username}",
