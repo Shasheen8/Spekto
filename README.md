@@ -35,10 +35,7 @@ Use [`spekto.example.yaml`](spekto.example.yaml) as the starting config.
 Run:
 
 ```bash
-spekto scan \
-  --config spekto.yaml \
-  --openapi ../VAmPI/openapi_specs/openapi3.yml \
-  --out-dir spekto-artifacts
+spekto scan --config spekto.yaml --openapi ../VAmPI/openapi_specs/openapi3.yml --out-dir spekto-artifacts
 ```
 
 ## Output
