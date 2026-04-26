@@ -1,4 +1,4 @@
-# Spekto
+<h1 align="center">Spekto</h1>
 
 <p align="center">
   <img src="docs/images/spekto_circular.png" alt="Spekto logo" width="220" />
