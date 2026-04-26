@@ -27,7 +27,7 @@ REST · GraphQL · gRPC. Inventory, safe seeding, security probes, evidence, cov
 - OpenAPI/Swagger, GraphQL SDL/introspection, `.proto`, descriptor sets, gRPC reflection, HAR, Postman, access logs, and manual seeds.
 - Full operation inventory with method counts, response statuses, auth hints, source provenance, and runtime/spec drift signals.
 - Read-only defaults: mutating requests, unsafe probes, live metadata SSRF, redirects, and unbounded bodies are off by default.
-- Security checks for auth bypass, JWT, CORS, headers, injection, SSRF, BOLA/BFLA, disclosure, TLS, GraphQL, and gRPC.
+- Security checks for auth bypass, JWT, CORS, headers, injection, SSRF, BOLA/BFLA, disclosure, TLS, schema drift, API response XSS, policy-backed authz/business logic, GraphQL, and gRPC.
 - CI-ready artifacts under `spekto-artifacts/`: `inventory.json`, `evidence.json`, `coverage.json`, `findings.json`, and `spekto.sarif`.
 
 ## Quick Start
@@ -72,18 +72,20 @@ Operations
 Spekto scan complete
 Coverage  7/14 operations seeded (50%)
   rest:     7/14
-  Blocked   bad_status:1  network_error:6
+  Blocked   bad_status:1  write_not_allowed:6
 
 Findings  159 total
-  Severity  CRITICAL:14  HIGH:131  LOW:14
+  Severity  CRITICAL:14  HIGH:131  MEDIUM:8  LOW:6
 
   SEVERITY    RULE            FINDING                                         OPERATION               ENDPOINT
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   CRITICAL    JWT001          JWT algorithm confusion: alg=none accepted      GET:/books/v1           http://127.0.0.1:5002/books/v1
   HIGH        AUTH001         Authentication bypass                           GET:/users/v1           http://127.0.0.1:5002/users/v1
-  HIGH        HDR005          IP-based authentication bypass via              GET:/                   http://127.0.0.1:5002/
-                              X-Forwarded-For
-  ... 134 more findings omitted (HIGH:120  LOW:14); see findings JSON or SARIF for full details
+  HIGH        AUTHZ005        Operation succeeded despite explicit role       GET:/admin              http://127.0.0.1:5002/admin
+                              auth policy deny
+  MEDIUM      SCHEMA002       Response body does not match documented         GET:/books/v1           http://127.0.0.1:5002/books/v1
+                              schema
+  ... 134 more findings omitted (HIGH:120  MEDIUM:8  LOW:6); see findings JSON or SARIF for full details
 
 Artifacts
   coverage:  spekto-artifacts/coverage.json
@@ -122,7 +124,7 @@ jobs:
       base_url: https://api.example.com
       upload_sarif: true
     secrets:
-      bearer_token: ${{ secrets.SPEKTO_BEARER_TOKEN }}
+      bearer_token: ${{ secrets.SPEKTO_BEARER_TOKEN }} # optional
 ```
 
 The workflow downloads the pinned release, verifies checksums, writes a temporary `spekto.yaml`, runs:
@@ -131,7 +133,7 @@ The workflow downloads the pinned release, verifies checksums, writes a temporar
 spekto scan --config spekto.yaml --openapi openapi.yaml --out-dir spekto-artifacts
 ```
 
-and uploads `spekto-artifacts/`. If SARIF upload is enabled, findings appear in GitHub code scanning.
+and uploads `spekto-artifacts/`. If `bearer_token` is omitted, the scan runs without an auth context. If SARIF upload is enabled, findings appear in GitHub code scanning.
 
 ## Commands
 
@@ -146,6 +148,10 @@ spekto scan --config spekto.yaml --openapi openapi.yaml
 spekto scan --config spekto.yaml --openapi openapi.yaml --dry-run
 
 spekto scan --config spekto.yaml --inventory inventory.json
+
+spekto scan --config spekto.yaml --openapi openapi.yaml --policy spekto-policy.yaml
+
+spekto scan --help
 ```
 
 Common scan flags:
@@ -155,6 +161,7 @@ Common scan flags:
 | `--config` | Spekto YAML config |
 | `--openapi`, `--graphql-schema`, `--proto`, `--descriptor-set`, `--grpc-reflection` | Spec inputs; discovery runs before scanning |
 | `--inventory` | Prebuilt canonical inventory |
+| `--policy` | Declarative authorization and custom-check policy YAML |
 | `--out-dir` | Artifact directory; defaults to `spekto-artifacts` for spec-input scans |
 | `--target`, `--exclude-target`, `--auth-context`, `--operation`, `--tag` | Scope controls |
 | `--request-budget`, `--timeout`, `--body-capture` | Runtime controls |
@@ -188,7 +195,7 @@ spekto discover merge --inventory spec.json --inventory observed.json --inventor
 | `spekto.sarif` | SARIF 2.1.0 for GitHub code scanning |
 
 > [!NOTE]
-> Artifacts are redacted by default, but can still include endpoint names, parameters, status codes, and security context.
+> Artifacts are redacted by default. They may still include endpoint names, parameter names, status codes, and security context needed for triage.
 
 ## Safety
 
@@ -200,6 +207,8 @@ spekto discover merge --inventory spec.json --inventory observed.json --inventor
 - Live cloud metadata SSRF probes require `--allow-live-ssrf`.
 - Target allowlists reject unapproved hosts before requests are sent.
 - Redirects are off by default, retries only apply to safe methods, and response bodies are bounded.
+- External OpenAPI `$ref` resolution is disabled by default to avoid local file reads or SSRF from untrusted specs.
+- Evidence, findings, and seed stores redact sensitive headers, URL credentials/query values, JSON secret fields, JWTs, AWS access keys, and private-key material by default.
 
 ## Rule Coverage
 
@@ -246,6 +255,18 @@ spekto discover merge --inventory spec.json --inventory observed.json --inventor
 | TLS002 | Broken or risky cipher suite | HTTPS |
 | TLS003 | Expired TLS certificate | HTTPS |
 | TLS004 | Invalid TLS certificate chain | HTTPS |
+| SCHEMA001 | Successful response status not documented | REST |
+| SCHEMA002 | Response body/content type does not match schema | REST |
+| SCHEMA003 | Missing required field or undocumented sensitive field | REST |
+| XSS001 | Reflected API response marker | REST |
+| XSS002 | Stored/reflected marker in seed response | REST |
+| AUTHZ003 | Sensitive field exposed contrary to policy | REST |
+| AUTHZ004 | Tenant boundary policy violation | REST |
+| AUTHZ005 | Explicit role/auth-context deny violation | REST |
+| LOGIC001 | Custom business-logic policy check failed | REST |
+| LOGIC002 | Custom workflow-control policy check failed | REST |
+| LOGIC003 | Custom status/amount/role policy check failed | REST |
+| LOGIC004 | Custom response assertion policy check failed | REST |
 
 </details>
 
@@ -253,7 +274,7 @@ spekto discover merge --inventory spec.json --inventory observed.json --inventor
 
 | Protocol | Inputs | Limits |
 |----------|--------|--------|
-| REST | Swagger `2.0`, OpenAPI `3.x`, HAR, Postman, access logs, manual seeds | Mutating methods skipped by default |
+| REST | Swagger `2.0`, OpenAPI `3.x`, HAR, Postman, access logs, manual seeds | Mutating methods skipped by default; external `$ref` disabled by default |
 | GraphQL | SDL, introspection JSON | HTTP-backed execution |
 | gRPC | `.proto`, descriptor sets, reflection | Unary execution only; streaming methods are skipped |
 
