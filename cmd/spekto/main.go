@@ -16,6 +16,7 @@ import (
 	"github.com/Shasheen8/Spekto/internal/auth"
 	"github.com/Shasheen8/Spekto/internal/config"
 	activediscovery "github.com/Shasheen8/Spekto/internal/discovery/active"
+	"github.com/Shasheen8/Spekto/internal/enrichment"
 	"github.com/Shasheen8/Spekto/internal/executor"
 	"github.com/Shasheen8/Spekto/internal/inventory"
 	policyeval "github.com/Shasheen8/Spekto/internal/policy"
@@ -491,7 +492,13 @@ Artifacts:
   --coverage-out file        Coverage JSON path
   --findings-out file        Findings JSON path
   --sarif-out file           SARIF path
-  --seed-store file          Successful seed store path`)
+  --seed-store file          Successful seed store path
+
+AI Enrichment:
+  --ai-enrich                Enrich findings with AI-generated analysis
+  --ai-model model           Override AI model for enrichment
+  --ai-max-findings n        Max findings to send for AI enrichment
+  --ai-out file              Output path for enriched findings JSON`)
 }
 
 func printDiscoverSpecHelp(w io.Writer) {
@@ -596,6 +603,10 @@ func runScan(args []string) error {
 	var timeout time.Duration
 	var bodyCapture string
 	var followRedirects triStateBool
+	var aiEnrich bool
+	var aiModel string
+	var aiMaxFindings int
+	var aiOut string
 
 	fs.StringVar(&configPath, "config", "", "Config file path")
 	fs.StringVar(&inventoryPath, "inventory", "", "Canonical inventory JSON file path")
@@ -629,6 +640,10 @@ func runScan(args []string) error {
 	fs.DurationVar(&timeout, "timeout", 0, "Override scan timeout")
 	fs.StringVar(&bodyCapture, "body-capture", "", "Body capture profile: redacted or full")
 	fs.Var(&followRedirects, "follow-redirects", "Follow HTTP redirects during scan execution")
+	fs.BoolVar(&aiEnrich, "ai-enrich", false, "Enrich findings with AI-generated analysis and remediation")
+	fs.StringVar(&aiModel, "ai-model", "", "Override AI model for enrichment")
+	fs.IntVar(&aiMaxFindings, "ai-max-findings", 0, "Max findings to send for AI enrichment")
+	fs.StringVar(&aiOut, "ai-out", "", "Output path for enriched findings JSON")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -658,6 +673,7 @@ func runScan(args []string) error {
 		return err
 	}
 	applyScanOverrides(&cfg, concurrency, requestBudget, timeout, bodyCapture, followRedirects, allowWrite, allowUnsafeRules, allowLiveSSRF)
+	applyAIOverrides(&cfg, aiEnrich, aiModel, aiMaxFindings, aiOut)
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -789,10 +805,10 @@ func runScan(args []string) error {
 
 	// Rule-based scanning (skipped when --no-rules is set).
 	if noRules {
-		if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), nil, cfg.Scan.BodyCapture, &artifacts); err != nil {
+		if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), nil, cfg.Scan.BodyCapture, nil, &artifacts); err != nil {
 			return err
 		}
-		if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), nil, &artifacts); err != nil {
+		if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), nil, nil, &artifacts); err != nil {
 			return err
 		}
 		report.PrintSummaryWithOptions(os.Stderr, bundle, nil, report.SummaryOptions{
@@ -836,15 +852,34 @@ func runScan(args []string) error {
 		findings = append(findings, statefulFindings...)
 	}
 
-	if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), findings, cfg.Scan.BodyCapture, &artifacts); err != nil {
+	var findingEnrichments []json.RawMessage
+	apiKey := strings.TrimSpace(os.Getenv(cfg.AI.APIKeyEnv))
+	if apiKey != "" && len(findings) > 0 {
+		var enrichTargets []rules.Finding
+		if cfg.AI.Enabled {
+			enrichTargets = findings
+		} else {
+			enrichTargets = enrichment.CriticalFindings(findings)
+		}
+		if len(enrichTargets) > 0 {
+			var enrichErr error
+			findingEnrichments, enrichErr = runAutoEnrichment(&cfg, enrichTargets, apiKey, effectiveOutDir, &artifacts)
+			if enrichErr != nil {
+				fmt.Fprintf(os.Stderr, "AI enrichment: %v\n", enrichErr)
+			}
+		}
+	}
+
+	if err := writeFindingsArtifact(defaultFindingsPath(findingsPath, cfg.Output.FindingsPath, effectiveOutDir), findings, cfg.Scan.BodyCapture, findingEnrichments, &artifacts); err != nil {
 		return err
 	}
-	if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), findings, &artifacts); err != nil {
+	if err := writeSARIFArtifact(defaultSARIFPath(sarifPath, cfg.Output.SARIFPath, effectiveOutDir), findings, findingEnrichments, &artifacts); err != nil {
 		return err
 	}
 
 	report.PrintSummaryWithOptions(os.Stderr, bundle, findings, report.SummaryOptions{
-		Artifacts: artifacts,
+		Artifacts:   artifacts,
+		Enrichments: enrichmentsToReport(findingEnrichments),
 	})
 
 	return nil
@@ -878,6 +913,108 @@ func applyScanOverrides(cfg *config.Config, concurrency int, requestBudget int, 
 	if allowLiveSSRF {
 		cfg.Scan.AllowLiveSSRF = true
 	}
+}
+
+func applyAIOverrides(cfg *config.Config, aiEnrich bool, aiModel string, aiMaxFindings int, aiOut string) {
+	if cfg == nil {
+		return
+	}
+	if aiEnrich {
+		cfg.AI.Enabled = true
+	}
+	if strings.TrimSpace(aiModel) != "" {
+		cfg.AI.Model = strings.TrimSpace(aiModel)
+	}
+	if aiMaxFindings > 0 {
+		cfg.AI.MaxFindings = aiMaxFindings
+	}
+	if strings.TrimSpace(aiOut) != "" {
+		cfg.AI.OutputPath = strings.TrimSpace(aiOut)
+	}
+}
+
+func runAutoEnrichment(cfg *config.Config, findings []rules.Finding, apiKey string, outDir string, artifacts *[]report.Artifact) ([]json.RawMessage, error) {
+	provider := enrichment.NewTogetherProvider(apiKey)
+	maxFindings := cfg.AI.MaxFindings
+	if !cfg.AI.Enabled {
+		maxFindings = 0
+	}
+	result := provider.Enrich(findings, enrichment.EnrichOptions{
+		MaxFindings:    maxFindings,
+		Model:          cfg.AI.Model,
+		Timeout:        cfg.AI.Timeout,
+		InputBodyLimit:  cfg.AI.InputBodyLimit,
+	})
+
+	enrichments := make([]json.RawMessage, 0, len(result.Enrichments))
+	for _, e := range result.Enrichments {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			continue
+		}
+		enrichments = append(enrichments, raw)
+	}
+
+	if result.EnrichedCount > 0 {
+		scope := "critical"
+		if cfg.AI.Enabled {
+			scope = "all"
+		}
+		fmt.Fprintf(os.Stderr, "  enriched  %d/%d findings (%s) [%d errors, %d skipped]\n", result.EnrichedCount, len(findings), scope, result.ErrorCount, result.SkippedCount)
+	}
+
+	if cfg.AI.Enabled && result.EnrichedCount > 0 {
+		enrichedPath := defaultEnrichedPath(cfg.AI.OutputPath, outDir)
+		if enrichedPath != "" {
+			data, err := result.JSON()
+			if err != nil {
+				return enrichments, fmt.Errorf("marshal enriched findings: %w", err)
+			}
+			if err := writeFile(enrichedPath, append(data, '\n')); err != nil {
+				return enrichments, err
+			}
+			*artifacts = append(*artifacts, report.Artifact{Kind: "enriched", Path: enrichedPath})
+		}
+	}
+
+	if result.ErrorCount > 0 && result.EnrichedCount == 0 {
+		return enrichments, fmt.Errorf("all %d enrichment attempts failed", result.ErrorCount)
+	}
+	return enrichments, nil
+}
+
+func defaultEnrichedPath(cfgPath, outDir string) string {
+	if path := strings.TrimSpace(cfgPath); path != "" {
+		return path
+	}
+	if strings.TrimSpace(outDir) != "" {
+		return filepath.Join(outDir, "findings.enriched.json")
+	}
+	return ""
+}
+
+func enrichmentsToReport(raw []json.RawMessage) []report.FindingEnrichment {
+	out := make([]report.FindingEnrichment, 0, len(raw))
+	for _, r := range raw {
+		var e struct {
+			FindingID        string   `json:"finding_id"`
+			Summary          string   `json:"summary"`
+			Impact           string   `json:"impact"`
+			ExploitNarrative string   `json:"exploit_narrative"`
+			FixSteps         []string `json:"fix_steps"`
+		}
+		if json.Unmarshal(r, &e) != nil {
+			continue
+		}
+		out = append(out, report.FindingEnrichment{
+			FindingID:        e.FindingID,
+			Summary:          e.Summary,
+			Impact:           e.Impact,
+			ExploitNarrative: e.ExploitNarrative,
+			FixSteps:         e.FixSteps,
+		})
+	}
+	return out
 }
 
 func filterFindingsByRuleID(findings []rules.Finding, enabledRules []string, disabledRules []string) []rules.Finding {
@@ -997,7 +1134,7 @@ func defaultSARIFPath(flagPath, configPath, outDir string) string {
 	return ""
 }
 
-func writeFindingsArtifact(path string, findings []rules.Finding, bodyCapture string, artifacts *[]report.Artifact) error {
+func writeFindingsArtifact(path string, findings []rules.Finding, bodyCapture string, enrichments []json.RawMessage, artifacts *[]report.Artifact) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
@@ -1007,8 +1144,9 @@ func writeFindingsArtifact(path string, findings []rules.Finding, bodyCapture st
 		findingsOutput = rules.RedactFindings(findings)
 	}
 	fs := rules.FindingSet{
-		Findings: findingsOutput,
-		Summary:  rules.Summarize(findings),
+		Findings:    findingsOutput,
+		Summary:     rules.Summarize(findings),
+		Enrichments: enrichments,
 	}
 	data, err := json.MarshalIndent(fs, "", "  ")
 	if err != nil {
@@ -1021,12 +1159,21 @@ func writeFindingsArtifact(path string, findings []rules.Finding, bodyCapture st
 	return nil
 }
 
-func writeSARIFArtifact(path string, findings []rules.Finding, artifacts *[]report.Artifact) error {
+func writeSARIFArtifact(path string, findings []rules.Finding, enrichments []json.RawMessage, artifacts *[]report.Artifact) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
 	}
-	data, err := report.SARIF(findings)
+	enrichmentMap := make(map[string]json.RawMessage, len(enrichments))
+	for _, e := range enrichments {
+		var partial struct {
+			FindingID string `json:"finding_id"`
+		}
+		if json.Unmarshal(e, &partial) == nil && partial.FindingID != "" {
+			enrichmentMap[partial.FindingID] = e
+		}
+	}
+	data, err := report.SARIF(findings, enrichmentMap)
 	if err != nil {
 		return err
 	}

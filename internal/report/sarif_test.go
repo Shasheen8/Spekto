@@ -25,7 +25,7 @@ func TestSARIFIncludesPartialFingerprints(t *testing.T) {
 		Evidence: rules.FindingEvidence{Seed: executor.Evidence{Request: executor.RequestEvidence{
 			URL: "https://api.example.com/v1/private",
 		}}},
-	}})
+	}}, nil)
 	if err != nil {
 		t.Fatalf("SARIF returned error: %v", err)
 	}

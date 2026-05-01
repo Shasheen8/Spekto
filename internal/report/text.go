@@ -13,6 +13,7 @@ import (
 
 const divider = "────────────────────────────────────────────────────────────"
 const maxSummaryFindings = 25
+const maxEnrichedCriticals = 5
 
 const (
 	findingSeverityWidth   = 10
@@ -32,9 +33,18 @@ type Artifact struct {
 	Path string
 }
 
+type FindingEnrichment struct {
+	FindingID        string
+	Summary          string
+	Impact           string
+	ExploitNarrative string
+	FixSteps         []string
+}
+
 type SummaryOptions struct {
 	RulesSkipped bool
 	Artifacts    []Artifact
+	Enrichments  []FindingEnrichment
 }
 
 // PrintSummary writes a human-readable scan summary to w (typically os.Stderr).
@@ -116,6 +126,40 @@ func PrintSummaryWithOptions(w io.Writer, bundle executor.Bundle, findings []rul
 				omittedSummary = " (" + strings.Join(omittedCounts, "  ") + ")"
 			}
 			fmt.Fprintf(w, "  ... %d more findings omitted%s; see findings JSON or SARIF for full details\n", omitted, omittedSummary)
+		}
+	}
+
+	if len(opts.Enrichments) > 0 {
+		enrichByID := make(map[string]*FindingEnrichment, len(opts.Enrichments))
+		for i := range opts.Enrichments {
+			enrichByID[opts.Enrichments[i].FindingID] = &opts.Enrichments[i]
+		}
+		enrichedCriticals := 0
+		for _, f := range sortedFindingsForSummary(findings) {
+			if f.Severity != rules.SeverityCritical {
+				continue
+			}
+			e, ok := enrichByID[f.ID]
+			if !ok {
+				continue
+			}
+			enrichedCriticals++
+			if enrichedCriticals > maxEnrichedCriticals {
+				break
+			}
+			fmt.Fprintf(w, "  %s %s\n", strings.ToUpper(string(f.Severity)), f.Title)
+			fmt.Fprintf(w, "    %s\n", e.Summary)
+			if e.Impact != "" {
+				fmt.Fprintf(w, "    impact: %s\n", e.Impact)
+			}
+			if len(e.FixSteps) > 0 {
+				fmt.Fprintf(w, "    fix: %s\n", e.FixSteps[0])
+			}
+			fmt.Fprintln(w)
+		}
+		remaining := len(opts.Enrichments) - enrichedCriticals
+		if remaining > 0 {
+			fmt.Fprintf(w, "  ... %d more enriched findings in findings.enriched.json\n\n", remaining)
 		}
 	}
 

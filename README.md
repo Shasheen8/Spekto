@@ -28,7 +28,7 @@ REST · GraphQL · gRPC. Inventory, safe seeding, security probes, evidence, cov
 - Full operation inventory with method counts, response statuses, auth hints, source provenance, and runtime/spec drift signals.
 - Read-only defaults: mutating requests, unsafe probes, live metadata SSRF, redirects, and unbounded bodies are off by default.
 - Security checks for auth bypass, JWT, CORS, headers, injection, SSRF, BOLA/BFLA, disclosure, TLS, schema drift, API response XSS, policy-backed authz/business logic, GraphQL, and gRPC.
-- CI-ready artifacts under `spekto-artifacts/`: `inventory.json`, `evidence.json`, `coverage.json`, `findings.json`, and `spekto.sarif`.
+- CI-ready artifacts under `spekto-artifacts/`: `inventory.json`, `evidence.json`, `coverage.json`, `findings.json`, `spekto.sarif`, and optional `findings.enriched.json`.
 
 ## Quick Start
 
@@ -169,6 +169,8 @@ Common scan flags:
 | `--allow-write`, `--allow-unsafe-rules`, `--allow-live-ssrf` | Explicit unsafe opt-ins |
 | `--stateful`, `--allow-write-stateful` | BOLA/BFLA checks |
 | `--out`, `--coverage-out`, `--findings-out`, `--sarif-out`, `--seed-store` | Explicit artifact paths |
+| `--ai-enrich` | Extend AI enrichment to all findings (critical enrichment is automatic when `TOGETHER_API_KEY` is set) |
+| `--ai-model`, `--ai-max-findings`, `--ai-out` | AI enrichment overrides |
 
 Discovery commands:
 
@@ -193,9 +195,97 @@ spekto discover merge --inventory spec.json --inventory observed.json --inventor
 | `coverage.json` | Per-protocol, per-auth-context, and block-reason coverage summary |
 | `findings.json` | Full findings with severity, confidence, evidence, OWASP/CWE metadata, and remediation |
 | `spekto.sarif` | SARIF 2.1.0 for GitHub code scanning |
+| `findings.enriched.json` | AI-enriched findings with summary, impact, exploit narrative, fix steps, validation steps, and false-positive notes |
 
 > [!NOTE]
 > Artifacts are redacted by default. They may still include endpoint names, parameter names, status codes, and security context needed for triage.
+
+## AI Enrichment
+
+Spekto enriches critical findings with AI-generated analysis (summary, impact, exploit narrative, fix steps, and false-positive notes) automatically when the `TOGETHER_API_KEY` environment variable is set. Use `--ai-enrich` to extend enrichment to all findings.
+
+### How It Works
+
+1. Static rule findings remain the canonical source of truth — AI enrichment never changes `rule_id`, severity, confidence, or evidence.
+2. Findings are redacted before being sent to the model (secrets, credentials, and sensitive headers are stripped).
+3. **Critical findings** are auto-enriched when `TOGETHER_API_KEY` is set — no flag required.
+4. `--ai-enrich` extends enrichment to all findings (critical, high, and low).
+5. Enrichment appears inline in CLI output for criticals, in `findings.json` (enrichments array), in SARIF (properties.enrichment), and in the separate `findings.enriched.json` artifact.
+6. If enrichment fails or times out, the scan still completes successfully.
+
+### Setup
+
+Set the `TOGETHER_API_KEY` environment variable with a [Together AI](https://together.ai) API key:
+
+```bash
+export TOGETHER_API_KEY=your_key_here
+spekto scan --config spekto.yaml --openapi openapi.yaml --out-dir spekto-artifacts
+```
+
+With `TOGETHER_API_KEY` set, critical findings are auto-enriched. To enrich all findings:
+
+```bash
+spekto scan --config spekto.yaml --openapi openapi.yaml --ai-enrich --out-dir spekto-artifacts
+```
+
+Config file alternative:
+
+```yaml
+ai:
+  enabled: true
+  model: Qwen/Qwen3-Coder-Next-FP8
+  max_findings: 50
+  timeout: 2m
+```
+
+### Supported Models
+
+The default model (`Qwen/Qwen3-Coder-Next-FP8`) works on the Together serverless tier. Some models require dedicated endpoints and will return a `model_not_available` error. If that happens, set `--ai-model` to a serverless-compatible model.
+
+Affordable serverless models (as of 2026):
+
+| Model | Input cost | Output cost | Notes |
+|-------|-----------|-------------|-------|
+| `Qwen/Qwen3-Coder-Next-FP8` (default) | $0.50/M | $1.20/M | Best balance of quality and cost |
+| `meta-llama/Meta-Llama-3-8B-Instruct-Lite` | $0.10/M | $0.10/M | Fast, cheap |
+| `google/gemma-4-31B-it` | $0.20/M | $0.50/M | Larger context |
+| `openai/gpt-oss-20b` | $0.05/M | $0.20/M | Budget option |
+
+> **Note:** Some models (e.g. `Qwen/Qwen3.6-Plus`) require streaming responses and are not supported for enrichment. Stick with models that support non-streaming completions.
+
+Browse all models at [api.together.ai/models](https://api.together.ai/models).
+
+### CLI Flags
+
+| Flag | Purpose |
+|------|---------|
+| `--ai-enrich` | Extend AI enrichment to all findings (criticals are automatic) |
+| `--ai-model` | Override the model used for enrichment |
+| `--ai-max-findings` | Cap the number of findings sent for enrichment (prioritizes critical/high first) |
+| `--ai-out` | Override the enriched findings output path |
+
+### GitHub Actions
+
+Pass the `together_api_key` secret to auto-enrich criticals, or add `ai_enrich: true` to enrich all findings:
+
+```yaml
+jobs:
+  scan:
+    uses: Shasheen8/Spekto/.github/workflows/spekto-reusable.yml@v1.1
+    with:
+      spekto_version: v1.1
+      openapi: openapi.yaml
+      ai_enrich: true
+    secrets:
+      together_api_key: ${{ secrets.TOGETHER_API_KEY }}
+```
+
+### Privacy Considerations
+
+- Only redacted finding context is sent to the model (no raw auth headers, cookies, or unredacted bodies).
+- Model output is scrubbed for AWS keys, private keys, and JWTs before being written to artifacts.
+- Enrichment respects `max_findings` and `timeout` bounds.
+- Operators should accept the data-sharing model before sending real evidence to any external AI service.
 
 ## Safety
 

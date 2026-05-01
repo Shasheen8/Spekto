@@ -48,11 +48,12 @@ type sarifText struct {
 }
 
 type sarifResult struct {
-	RuleID              string            `json:"ruleId"`
-	Level               string            `json:"level"`
-	Message             sarifText         `json:"message"`
-	Locations           []sarifLocation   `json:"locations,omitempty"`
-	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
+	RuleID              string                 `json:"ruleId"`
+	Level               string                 `json:"level"`
+	Message             sarifText              `json:"message"`
+	Locations           []sarifLocation        `json:"locations,omitempty"`
+	PartialFingerprints map[string]string      `json:"partialFingerprints,omitempty"`
+	Properties          map[string]interface{} `json:"properties,omitempty"`
 }
 
 type sarifLocation struct {
@@ -68,9 +69,10 @@ type sarifArtifactLocation struct {
 }
 
 // SARIF produces a SARIF 2.1.0 document from a set of findings.
-// The output is accepted by GitHub Advanced Security for display in the
-// Security tab when uploaded as a code-scanning artifact.
-func SARIF(findings []rules.Finding) ([]byte, error) {
+// enrichmentMap keys are finding IDs; values are already-scrubbed
+// enrichment objects. When present, enrichment data is attached to
+// each result's properties so it is visible in GitHub Security tab.
+func SARIF(findings []rules.Finding, enrichmentMap map[string]json.RawMessage) ([]byte, error) {
 	// Collect unique rules in deterministic order.
 	rulesSeen := map[string]sarifRule{}
 	for _, f := range findings {
@@ -120,6 +122,14 @@ func SARIF(findings []rules.Finding) ([]byte, error) {
 					ArtifactLocation: sarifArtifactLocation{URI: probeURL},
 				},
 			}}
+		}
+		if e, ok := enrichmentMap[f.ID]; ok {
+			var enriched map[string]interface{}
+			if err := json.Unmarshal(e, &enriched); err == nil {
+				delete(enriched, "finding_id")
+				delete(enriched, "rule_id")
+				r.Properties = map[string]interface{}{"enrichment": enriched}
+			}
 		}
 		results = append(results, r)
 	}

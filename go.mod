@@ -6,6 +6,7 @@ require (
 	github.com/getkin/kin-openapi v0.134.0
 	github.com/golang/protobuf v1.5.4
 	github.com/jhump/protoreflect v1.18.0
+	github.com/togethercomputer/together-go v0.9.0
 	github.com/vektah/gqlparser/v2 v2.5.32
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
@@ -24,6 +25,10 @@ require (
 	github.com/oasdiff/yaml3 v0.0.0-20260224194419-61cd415a242b // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/petermattis/goid v0.0.0-20260113132338-7c7de50cc741 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect

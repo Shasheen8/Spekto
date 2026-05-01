@@ -26,6 +26,7 @@ type Config struct {
 	Output        OutputConfig     `yaml:"output"`
 	PolicyPath    string           `yaml:"policy_path,omitempty"`
 	ResourceHints ResourceHints    `yaml:"resource_hints,omitempty"`
+	AI            AIConfig         `yaml:"ai,omitempty"`
 }
 
 // ResourceHints holds operator-provided seed values used by the candidate generator.
@@ -108,6 +109,17 @@ type OutputConfig struct {
 	CoveragePath  string `yaml:"coverage_path,omitempty"`
 	SeedStorePath string `yaml:"seed_store_path,omitempty"`
 	FindingsPath  string `yaml:"findings_path,omitempty"`
+}
+
+type AIConfig struct {
+	Enabled       bool          `yaml:"enabled,omitempty"`
+	Provider      string        `yaml:"provider,omitempty"`
+	Model         string        `yaml:"model,omitempty"`
+	MaxFindings   int           `yaml:"max_findings,omitempty"`
+	Timeout       time.Duration `yaml:"timeout,omitempty"`
+	InputBodyLimit int          `yaml:"input_body_limit,omitempty"`
+	OutputPath    string        `yaml:"output_path,omitempty"`
+	APIKeyEnv     string        `yaml:"api_key_env,omitempty"`
 }
 
 type MTLSConfig struct {
@@ -256,6 +268,41 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	}
 	if raw := strings.TrimSpace(getenv("SPEKTO_OUTPUT_FINDINGS")); raw != "" {
 		c.Output.FindingsPath = raw
+	}
+
+	if raw := strings.TrimSpace(getenv("SPEKTO_AI_ENABLED")); raw != "" {
+		val, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_AI_ENABLED: %w", err)
+		}
+		c.AI.Enabled = val
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_AI_MODEL")); raw != "" {
+		c.AI.Model = raw
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_AI_MAX_FINDINGS")); raw != "" {
+		val, err := strconv.Atoi(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_AI_MAX_FINDINGS: %w", err)
+		}
+		c.AI.MaxFindings = val
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_AI_TIMEOUT")); raw != "" {
+		val, err := time.ParseDuration(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_AI_TIMEOUT: %w", err)
+		}
+		c.AI.Timeout = val
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_AI_INPUT_BODY_LIMIT")); raw != "" {
+		val, err := strconv.Atoi(raw)
+		if err != nil {
+			return fmt.Errorf("parse SPEKTO_AI_INPUT_BODY_LIMIT: %w", err)
+		}
+		c.AI.InputBodyLimit = val
+	}
+	if raw := strings.TrimSpace(getenv("SPEKTO_AI_OUTPUT_PATH")); raw != "" {
+		c.AI.OutputPath = raw
 	}
 
 	return c.resolveAuthContextEnv(getenv)
@@ -428,6 +475,21 @@ func (c *Config) applyDefaults() {
 				c.AuthContexts[i].Login.Method = httpMethodPost
 			}
 		}
+	}
+	if c.AI.MaxFindings == 0 {
+		c.AI.MaxFindings = 50
+	}
+	if c.AI.Timeout == 0 {
+		c.AI.Timeout = 2 * time.Minute
+	}
+	if c.AI.InputBodyLimit == 0 {
+		c.AI.InputBodyLimit = 500
+	}
+	if c.AI.APIKeyEnv == "" {
+		c.AI.APIKeyEnv = "TOGETHER_API_KEY"
+	}
+	if c.AI.Model == "" {
+		c.AI.Model = "Qwen/Qwen3-Coder-Next-FP8"
 	}
 }
 

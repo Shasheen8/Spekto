@@ -77,9 +77,22 @@ on:
         required: false
         default: 14
         type: number
+      ai_enrich:
+        description: 'Enable AI enrichment of findings'
+        required: false
+        default: false
+        type: boolean
+      ai_model:
+        description: 'Override AI model for enrichment'
+        required: false
+        default: ''
+        type: string
     secrets:
       bearer_token:
         description: 'Bearer token for authenticated API scans'
+        required: false
+      together_api_key:
+        description: 'Together AI API key for enrichment'
         required: false
 
 permissions:
@@ -156,6 +169,9 @@ jobs:
           SCAN_TAG: ${{ inputs.tag }}
           SCAN_NO_RULES: ${{ inputs.no_rules }}
           SCAN_STATEFUL: ${{ inputs.stateful }}
+          TOGETHER_API_KEY: ${{ secrets.together_api_key }}
+          SPEKTO_AI_ENABLED: ${{ inputs.ai_enrich }}
+          SPEKTO_AI_MODEL: ${{ inputs.ai_model }}
         run: |
           set -euo pipefail
           args=(scan --config spekto.yaml --out-dir spekto-artifacts)
@@ -176,6 +192,12 @@ jobs:
           fi
           if [ "${SCAN_STATEFUL}" = "true" ]; then
             args+=(--stateful)
+          fi
+          if [ "${SPEKTO_AI_ENABLED}" = "true" ]; then
+            args+=(--ai-enrich)
+          fi
+          if [ -n "${SPEKTO_AI_MODEL}" ]; then
+            args+=(--ai-model "${SPEKTO_AI_MODEL}")
           fi
           ./spekto "${args[@]}"
 
