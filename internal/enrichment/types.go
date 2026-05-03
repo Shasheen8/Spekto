@@ -195,8 +195,8 @@ func PrioritizeFindings(findings []rules.Finding, maxFindings int) []rules.Findi
 }
 
 var (
-	reAWSKey      = regexp.MustCompile(`AKIA[0-9A-Z]{16}`)
-	rePrivateKey  = regexp.MustCompile(`-----BEGIN (?:RSA |DSA |EC )?PRIVATE KEY-----`)
+	reAWSKey     = regexp.MustCompile(`AKIA[0-9A-Z]{16}`)
+	rePrivateKey = regexp.MustCompile(`-----BEGIN (?:RSA |DSA |EC )?PRIVATE KEY-----`)
 	reJWT        = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)
 )
 

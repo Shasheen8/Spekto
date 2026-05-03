@@ -943,7 +943,7 @@ func runAutoEnrichment(cfg *config.Config, findings []rules.Finding, apiKey stri
 		MaxFindings:    maxFindings,
 		Model:          cfg.AI.Model,
 		Timeout:        cfg.AI.Timeout,
-		InputBodyLimit:  cfg.AI.InputBodyLimit,
+		InputBodyLimit: cfg.AI.InputBodyLimit,
 	})
 
 	enrichments := make([]json.RawMessage, 0, len(result.Enrichments))

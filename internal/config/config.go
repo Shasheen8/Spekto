@@ -112,14 +112,14 @@ type OutputConfig struct {
 }
 
 type AIConfig struct {
-	Enabled       bool          `yaml:"enabled,omitempty"`
-	Provider      string        `yaml:"provider,omitempty"`
-	Model         string        `yaml:"model,omitempty"`
-	MaxFindings   int           `yaml:"max_findings,omitempty"`
-	Timeout       time.Duration `yaml:"timeout,omitempty"`
-	InputBodyLimit int          `yaml:"input_body_limit,omitempty"`
-	OutputPath    string        `yaml:"output_path,omitempty"`
-	APIKeyEnv     string        `yaml:"api_key_env,omitempty"`
+	Enabled        bool          `yaml:"enabled,omitempty"`
+	Provider       string        `yaml:"provider,omitempty"`
+	Model          string        `yaml:"model,omitempty"`
+	MaxFindings    int           `yaml:"max_findings,omitempty"`
+	Timeout        time.Duration `yaml:"timeout,omitempty"`
+	InputBodyLimit int           `yaml:"input_body_limit,omitempty"`
+	OutputPath     string        `yaml:"output_path,omitempty"`
+	APIKeyEnv      string        `yaml:"api_key_env,omitempty"`
 }
 
 type MTLSConfig struct {

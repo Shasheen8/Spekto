@@ -86,9 +86,16 @@ Findings  159 total
   MEDIUM      SCHEMA002       Response body does not match documented         GET:/books/v1           http://127.0.0.1:5002/books/v1
                               schema
   ... 134 more findings omitted (HIGH:120  MEDIUM:8  LOW:6); see findings JSON or SARIF for full details
+  CRITICAL JWT algorithm confusion: alg=none accepted
+    The server accepted a JWT with 'alg=none', bypassing signature verification entirely.
+    impact: An attacker could forge arbitrary JWTs without knowing any secret key, gaining unauthorized access.
+    fix: Configure the JWT validation library to explicitly reject tokens with 'alg=none'.
+
+  ... 13 more enriched findings in findings.enriched.json
 
 Artifacts
   coverage:  spekto-artifacts/coverage.json
+  enriched:  spekto-artifacts/findings.enriched.json
   evidence:  spekto-artifacts/evidence.json
   findings:  spekto-artifacts/findings.json
   inventory: spekto-artifacts/inventory.json
@@ -193,9 +200,9 @@ spekto discover merge --inventory spec.json --inventory observed.json --inventor
 | `inventory.json` | Canonical API inventory with provenance, auth hints, response statuses, and drift signals |
 | `evidence.json` | Redacted request/response evidence and coverage diagnostics |
 | `coverage.json` | Per-protocol, per-auth-context, and block-reason coverage summary |
-| `findings.json` | Full findings with severity, confidence, evidence, OWASP/CWE metadata, and remediation |
-| `spekto.sarif` | SARIF 2.1.0 for GitHub code scanning |
-| `findings.enriched.json` | AI-enriched findings with summary, impact, exploit narrative, fix steps, validation steps, and false-positive notes |
+| `findings.json` | Full findings with severity, confidence, evidence, OWASP/CWE metadata, remediation, and enrichment data (when AI enrichment is active) |
+| `spekto.sarif` | SARIF 2.1.0 for GitHub code scanning, with enrichment under `properties.enrichment` (when AI enrichment is active) |
+| `findings.enriched.json` | AI-enriched findings artifact with summary, impact, exploit narrative, fix steps, validation steps, false-positive notes, and model metadata |
 
 > [!NOTE]
 > Artifacts are redacted by default. They may still include endpoint names, parameter names, status codes, and security context needed for triage.

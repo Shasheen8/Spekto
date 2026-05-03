@@ -80,9 +80,9 @@ type Rule interface {
 
 // FindingSet is the top-level output written to the findings file.
 type FindingSet struct {
-	Findings     []Finding               `json:"findings"`
-	Summary      FindingSummary          `json:"summary"`
-	Enrichments  []json.RawMessage       `json:"enrichments,omitempty"`
+	Findings    []Finding         `json:"findings"`
+	Summary     FindingSummary    `json:"summary"`
+	Enrichments []json.RawMessage `json:"enrichments,omitempty"`
 }
 
 // FindingSummary aggregates counts for quick reporting.
